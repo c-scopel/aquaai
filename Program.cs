@@ -225,8 +225,6 @@ async Task<string> ProcessChat(ChatRequest req)
             var prompt = $@"
         Você é um especialista em aquicultura.
 
-        Faça 5 perguntas que você precisaria saber as respostas para sugerir melhorias no meu processo diariamente.
-
         Contexto técnico:
         {contextoFormatado}
 
@@ -236,10 +234,7 @@ async Task<string> ProcessChat(ChatRequest req)
         - Oxigênio: {(oxi.HasValue ? oxi.Value.ToString() : "sem leitura")}
 
         Responda de forma clara, objetiva e útil.
-        Se algum dado estiver sem leitura, não assuma risco real — peça validação.
-        Se houver risco, alerte claramente.
-
-        Após a sua resposta, sugira o que posso fazer para melhorar meu processo, baseado nas respostas das 5 perguntas iniciais.
+        Máximo 10 linhas.
 
         Pergunta:
         {msg}
