@@ -126,6 +126,9 @@ string BuscarConhecimento(SqliteConnection conn, string pergunta, int clienteId)
 
 string ExtrairTexto(JsonElement root)
 {
+    if (root.TryGetProperty("output_text", out var text))
+        return text.GetString() ?? "";
+
     if (root.TryGetProperty("output", out var output))
     {
         foreach (var item in output.EnumerateArray())
@@ -134,10 +137,8 @@ string ExtrairTexto(JsonElement root)
             {
                 foreach (var c in content.EnumerateArray())
                 {
-                    if (c.TryGetProperty("text", out var text))
-                    {
-                        return text.GetString() ?? "";
-                    }
+                    if (c.TryGetProperty("text", out var t))
+                        return t.GetString() ?? "";
                 }
             }
         }
@@ -214,10 +215,13 @@ async Task<string> ProcessChat(ChatRequest req)
         Após a sua resposta, sugira o que posso fazer para melhorar meu processo, baseado nas respostas das 5 perguntas iniciais.
 
         Pergunta:
-        { msg}
+        {msg}
         ";
 
-        using var http = new HttpClient();
+        using var http = new HttpClient
+        {
+            Timeout = TimeSpan.FromSeconds(20)
+        };
 
         http.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
@@ -240,7 +244,6 @@ async Task<string> ProcessChat(ChatRequest req)
 
         if (!response.IsSuccessStatusCode)
         {
-            var error = await response.Content.ReadAsStringAsync();
             Console.WriteLine("OPENAI ERROR: " + error);
             throw new Exception("Erro na OpenAI: " + response.StatusCode);
         }
