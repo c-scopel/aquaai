@@ -342,6 +342,16 @@ app.MapGet("/mensagens", () =>
     return lista;
 });
 
+// Health
+app.MapGet("/health", () =>
+{
+    return Results.Ok(new
+    {
+        status = "ok",
+        time = DateTime.UtcNow
+    });
+});
+
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
