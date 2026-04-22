@@ -124,28 +124,22 @@ string BuscarConhecimento(SqliteConnection conn, string pergunta, int clienteId)
     return string.Join("\n", lista);
 }
 
-string ExtrairTexto(JsonElement element)
+string ExtrairTexto(JsonElement root)
 {
-    if (element.ValueKind == JsonValueKind.String)
-        return element.GetString() ?? "";
-
-    if (element.ValueKind == JsonValueKind.Array)
+    if (root.TryGetProperty("output", out var output))
     {
-        foreach (var item in element.EnumerateArray())
+        foreach (var item in output.EnumerateArray())
         {
-            var result = ExtrairTexto(item);
-            if (!string.IsNullOrWhiteSpace(result))
-                return result;
-        }
-    }
-
-    if (element.ValueKind == JsonValueKind.Object)
-    {
-        foreach (var prop in element.EnumerateObject())
-        {
-            var result = ExtrairTexto(prop.Value);
-            if (!string.IsNullOrWhiteSpace(result))
-                return result;
+            if (item.TryGetProperty("content", out var content))
+            {
+                foreach (var c in content.EnumerateArray())
+                {
+                    if (c.TryGetProperty("text", out var text))
+                    {
+                        return text.GetString() ?? "";
+                    }
+                }
+            }
         }
     }
 
@@ -214,7 +208,7 @@ async Task<string> ProcessChat(ChatRequest req)
         - Oxigênio: {(oxi.HasValue ? oxi.Value.ToString() : "sem leitura")}
 
         Responda de forma clara, objetiva e útil.
-        Se algum dado estiver "sem leitura", não assuma risco real — peça validação.
+        Se algum dado estiver sem leitura, não assuma risco real — peça validação.
         Se houver risco, alerte claramente.
 
         Após a sua resposta, sugira o que posso fazer para melhorar meu processo, baseado nas respostas das 5 perguntas iniciais.
