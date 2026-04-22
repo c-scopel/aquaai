@@ -183,13 +183,14 @@ async Task<string> ProcessChat(ChatRequest req)
 
     using var reader = cmdRead.ExecuteReader();
 
-    double temp = 0, ph = 0, oxi = 0;
+    double? temp = null, ph = null, oxi = null;
     if (reader.Read())
     {
-        temp = reader.IsDBNull(0) ? 0 : reader.GetDouble(0);
-        ph = reader.IsDBNull(1) ? 0 : reader.GetDouble(1);
-        oxi = reader.IsDBNull(2) ? 0 : reader.GetDouble(2);
+        temp = reader.IsDBNull(0) ? null : reader.GetDouble(0);
+        ph = reader.IsDBNull(1) ? null : reader.GetDouble(1);
+        oxi = reader.IsDBNull(2) ? null : reader.GetDouble(2);
     }
+
 
     string resposta = "";
 
@@ -208,17 +209,18 @@ async Task<string> ProcessChat(ChatRequest req)
         {contextoFormatado}
 
         Dados do tanque:
-        - Temperatura: {temp} °C
-        - pH: {ph}
-        - Oxigênio: {oxi} mg/L
+        - Temperatura: {(temp.HasValue ? temp.Value.ToString() : "sem leitura")}
+        - pH: {(ph.HasValue ? ph.Value.ToString() : "sem leitura")}
+        - Oxigênio: {(oxi.HasValue ? oxi.Value.ToString() : "sem leitura")}
 
         Responda de forma clara, objetiva e útil.
+        Se algum dado estiver "sem leitura", não assuma risco real — peça validação.
         Se houver risco, alerte claramente.
 
         Após a sua resposta, sugira o que posso fazer para melhorar meu processo, baseado nas respostas das 5 perguntas iniciais.
 
         Pergunta:
-        {msg}
+        { msg}
         ";
 
         using var http = new HttpClient();
@@ -242,6 +244,13 @@ async Task<string> ProcessChat(ChatRequest req)
         Console.WriteLine("RESPOSTA OPENAI:");
         Console.WriteLine(raw);
 
+        if (!response.IsSuccessStatusCode)
+        {
+            var error = await response.Content.ReadAsStringAsync();
+            Console.WriteLine("OPENAI ERROR: " + error);
+            throw new Exception("Erro na OpenAI: " + response.StatusCode);
+        }
+
         // Parse seguro
         using var doc = System.Text.Json.JsonDocument.Parse(raw);
 
@@ -251,7 +260,8 @@ async Task<string> ProcessChat(ChatRequest req)
 
         if (string.IsNullOrWhiteSpace(resposta))
         {
-            resposta = "Não consegui gerar resposta da IA no momento.";
+            Console.WriteLine("DEBUG: resposta vazia da OpenAI");
+            resposta = "Não consegui interpretar a resposta da IA. Tente novamente.";
         }
 
     }
