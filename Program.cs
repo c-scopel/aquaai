@@ -244,8 +244,12 @@ async Task<string> ProcessChat(ChatRequest req)
 
         if (!response.IsSuccessStatusCode)
         {
-            Console.WriteLine("OPENAI ERROR: " + error);
-            throw new Exception("Erro na OpenAI: " + response.StatusCode);
+            var error = await response.Content.ReadAsStringAsync();
+
+            Console.WriteLine("OPENAI ERROR:");
+            Console.WriteLine(error);
+
+            throw new Exception($"Erro na OpenAI: {response.StatusCode} - {error}");
         }
 
         // Parse seguro
