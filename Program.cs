@@ -18,7 +18,7 @@ if (string.IsNullOrEmpty(apiKey))
 var openAI = new OpenAIClient(apiKey);
 
 // Criar tabelas
-using (var conn = new SqliteConnection("Data Source=aqua.db"))
+using (var conn = new SqliteConnection("Data Source=aqua.db;Cache=Shared"))
 {
     conn.Open();
 
@@ -65,7 +65,7 @@ app.MapPost("/leitura", async (HttpContext context) =>
     var leitura = await context.Request.ReadFromJsonAsync<Leitura>();
     if (leitura == null) return Results.BadRequest("Leitura inválida.");
 
-    using var conn = new SqliteConnection("Data Source=aqua.db");
+    using var conn = new SqliteConnection("Data Source=aqua.db;Cache=Shared");
     conn.Open();
 
     var cmd = conn.CreateCommand();
@@ -148,7 +148,6 @@ string ExtrairTexto(JsonElement root)
 // Função IA + fallback
 async Task<string> ProcessChat(ChatRequest req)
 {
-    await AppState.Lock.WaitAsync();
     try
     {
 
@@ -156,20 +155,28 @@ async Task<string> ProcessChat(ChatRequest req)
 
         var msg = req.Mensagem.Trim();
 
-        using var conn = new SqliteConnection("Data Source=aqua.db");
+        using var conn = new SqliteConnection("Data Source=aqua.db;Cache=Shared");
         conn.Open();
 
         var conhecimento = BuscarConhecimento(conn, msg, 1);
 
         // Salvar mensagem usuário
-        var cmdUser = conn.CreateCommand();
-        cmdUser.CommandText = @"
-        INSERT INTO Mensagens (Tanque, Remetente, Mensagem, Data)
-        VALUES ('1', 'user', $msg, $data)
-    ";
-        cmdUser.Parameters.AddWithValue("$msg", msg);
-        cmdUser.Parameters.AddWithValue("$data", DateTime.Now.ToString("s"));
-        cmdUser.ExecuteNonQuery();
+        await AppState.Lock.WaitAsync();
+        try
+        {
+            var cmdUser = conn.CreateCommand();
+            cmdUser.CommandText = @"
+            INSERT INTO Mensagens (Tanque, Remetente, Mensagem, Data)
+            VALUES ('1', 'user', $msg, $data)
+        ";
+            cmdUser.Parameters.AddWithValue("$msg", msg);
+            cmdUser.Parameters.AddWithValue("$data", DateTime.Now.ToString("s"));
+            cmdUser.ExecuteNonQuery();
+        }
+        finally
+        {
+            AppState.Lock.Release();
+        }
 
         // Buscar última leitura
         var cmdRead = conn.CreateCommand();
@@ -288,15 +295,20 @@ async Task<string> ProcessChat(ChatRequest req)
         }
 
         // Salvar resposta
-        var cmdBot = conn.CreateCommand();
-        cmdBot.CommandText = @"
+        await AppState.Lock.WaitAsync();
+        try
+        {
+            var cmdBot = conn.CreateCommand();
+            cmdBot.CommandText = @"
         INSERT INTO Mensagens (Tanque, Remetente, Mensagem, Data)
         VALUES ('1', 'bot', $msg, $data)
     ";
-        resposta = resposta.Trim();
-        cmdBot.Parameters.AddWithValue("$msg", resposta);
-        cmdBot.Parameters.AddWithValue("$data", DateTime.Now.ToString("s"));
-        cmdBot.ExecuteNonQuery();
+            resposta = resposta.Trim();
+            cmdBot.Parameters.AddWithValue("$msg", resposta);
+            cmdBot.Parameters.AddWithValue("$data", DateTime.Now.ToString("s"));
+            cmdBot.ExecuteNonQuery();
+        }
+        finally { }
 
         Console.WriteLine("PROCESSCHAT FIM: " + DateTime.Now);
 
@@ -337,7 +349,7 @@ app.MapPost("/conhecimento", async (HttpContext context) =>
     var item = await context.Request.ReadFromJsonAsync<ConhecimentoRequest>();
     if (item == null) return Results.BadRequest("Dados inválidos.");
 
-    using var conn = new SqliteConnection("Data Source=aqua.db");
+    using var conn = new SqliteConnection("Data Source=aqua.db;Cache=Shared");
     conn.Open();
 
     var cmd = conn.CreateCommand();
@@ -361,7 +373,7 @@ app.MapPost("/conhecimento", async (HttpContext context) =>
 app.MapGet("/mensagens", () =>
 {
     var lista = new List<dynamic>();
-    using var conn = new SqliteConnection("Data Source=aqua.db");
+    using var conn = new SqliteConnection("Data Source=aqua.db;Cache=Shared");
     conn.Open();
 
     var cmd = conn.CreateCommand();
