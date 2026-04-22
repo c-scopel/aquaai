@@ -155,23 +155,32 @@ async Task<string> ProcessChat(ChatRequest req)
 
         var msg = req.Mensagem.Trim();
 
-        using var conn = new SqliteConnection("Data Source=aqua.db;Cache=Shared");
-        conn.Open();
+        // 🔎 BUSCAR CONHECIMENTO (CONEXÃO PRÓPRIA)
+        string conhecimento;
 
-        var conhecimento = BuscarConhecimento(conn, msg, 1);
+        using (var conn = new SqliteConnection("Data Source=aqua.db"))
+        {
+            conn.Open();
+            conhecimento = BuscarConhecimento(conn, msg, 1);
+        }
+
 
         // Salvar mensagem usuário
         await AppState.Lock.WaitAsync();
         try
         {
-            var cmdUser = conn.CreateCommand();
-            cmdUser.CommandText = @"
+            using var conn = new SqliteConnection("Data Source=aqua.db");
+            conn.Open();
+
+            var cmd = conn.CreateCommand();
+
+            cmd.CommandText = @"
             INSERT INTO Mensagens (Tanque, Remetente, Mensagem, Data)
             VALUES ('1', 'user', $msg, $data)
         ";
-            cmdUser.Parameters.AddWithValue("$msg", msg);
-            cmdUser.Parameters.AddWithValue("$data", DateTime.Now.ToString("s"));
-            cmdUser.ExecuteNonQuery();
+            cmd.Parameters.AddWithValue("$msg", msg);
+            cmd.Parameters.AddWithValue("$data", DateTime.Now.ToString("s"));
+            cmd.ExecuteNonQuery();
         }
         finally
         {
@@ -179,24 +188,31 @@ async Task<string> ProcessChat(ChatRequest req)
         }
 
         // Buscar última leitura
-        var cmdRead = conn.CreateCommand();
-        cmdRead.CommandText = @"
+        double? temp = null, ph = null, oxi = null;
+
+        // 📊 BUSCAR LEITURA (CONEXÃO ISOLADA)
+        using (var conn = new SqliteConnection("Data Source=aqua.db"))
+        {
+            conn.Open();
+
+            var cmd = conn.CreateCommand();
+            cmd.CommandText = @"
         SELECT Temperatura, Ph, Oxigenio 
         FROM Leituras 
         WHERE Tanque = '1'
-        ORDER BY Id DESC LIMIT 1
+        ORDER BY Id DESC 
+        LIMIT 1
     ";
 
-        using var reader = cmdRead.ExecuteReader();
+            using var reader = cmd.ExecuteReader();
 
-        double? temp = null, ph = null, oxi = null;
-        if (reader.Read())
-        {
-            temp = reader.IsDBNull(0) ? null : reader.GetDouble(0);
-            ph = reader.IsDBNull(1) ? null : reader.GetDouble(1);
-            oxi = reader.IsDBNull(2) ? null : reader.GetDouble(2);
+            if (reader.Read())
+            {
+                temp = reader.IsDBNull(0) ? null : reader.GetDouble(0);
+                ph = reader.IsDBNull(1) ? null : reader.GetDouble(1);
+                oxi = reader.IsDBNull(2) ? null : reader.GetDouble(2);
+            }
         }
-
 
         string resposta = "";
 
@@ -298,17 +314,26 @@ async Task<string> ProcessChat(ChatRequest req)
         await AppState.Lock.WaitAsync();
         try
         {
+            using var conn = new SqliteConnection("Data Source=aqua.db");
+            conn.Open();
+
             var cmdBot = conn.CreateCommand();
             cmdBot.CommandText = @"
         INSERT INTO Mensagens (Tanque, Remetente, Mensagem, Data)
         VALUES ('1', 'bot', $msg, $data)
     ";
+
             resposta = resposta.Trim();
+
             cmdBot.Parameters.AddWithValue("$msg", resposta);
             cmdBot.Parameters.AddWithValue("$data", DateTime.Now.ToString("s"));
+
             cmdBot.ExecuteNonQuery();
         }
-        finally { }
+        finally
+        {
+            AppState.Lock.Release();
+        }
 
         Console.WriteLine("PROCESSCHAT FIM: " + DateTime.Now);
 
@@ -317,7 +342,6 @@ async Task<string> ProcessChat(ChatRequest req)
     }
     finally
     {
-        AppState.Lock.Release();
     }
 
 }
