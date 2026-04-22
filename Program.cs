@@ -123,6 +123,33 @@ string BuscarConhecimento(SqliteConnection conn, string pergunta, int clienteId)
     return string.Join("\n", lista);
 }
 
+string ExtrairTexto(JsonElement element)
+{
+    if (element.ValueKind == JsonValueKind.String)
+        return element.GetString() ?? "";
+
+    if (element.ValueKind == JsonValueKind.Array)
+    {
+        foreach (var item in element.EnumerateArray())
+        {
+            var result = ExtrairTexto(item);
+            if (!string.IsNullOrWhiteSpace(result))
+                return result;
+        }
+    }
+
+    if (element.ValueKind == JsonValueKind.Object)
+    {
+        foreach (var prop in element.EnumerateObject())
+        {
+            var result = ExtrairTexto(prop.Value);
+            if (!string.IsNullOrWhiteSpace(result))
+                return result;
+        }
+    }
+
+    return "";
+}
 
 // Função IA + fallback
 async Task<string> ProcessChat(ChatRequest req)
@@ -219,22 +246,12 @@ async Task<string> ProcessChat(ChatRequest req)
 
         var root = doc.RootElement;
 
-        if (root.TryGetProperty("output_text", out var outputText))
-        {
-            resposta = outputText.GetString() ?? "";
-        }
-        else if (root.TryGetProperty("output", out var output))
-        {
-            resposta = output[0]
-                .GetProperty("content")[0]
-                .GetProperty("text")
-                .GetString() ?? "";
-        }
-        else
-        {
-            throw new Exception("Resposta inválida da OpenAI");
-        }
+        resposta = ExtrairTexto(root);
 
+        if (string.IsNullOrWhiteSpace(resposta))
+        {
+            resposta = "Não consegui gerar resposta da IA no momento.";
+        }
 
     }
     catch (Exception ex)
