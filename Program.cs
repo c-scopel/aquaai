@@ -266,7 +266,8 @@ async Task<string> ProcessChat(ChatRequest req)
     cmdBot.Parameters.AddWithValue("$data", DateTime.Now.ToString("s"));
     cmdBot.ExecuteNonQuery();
 
-    return resposta.Trim();
+    //return resposta.Trim();
+    return "IA OK - TESTE TWILIO";
 }
 
 // Chat endpoint
