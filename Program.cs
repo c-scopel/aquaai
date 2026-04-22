@@ -2,6 +2,7 @@ using Microsoft.Data.Sqlite;
 using System.Net;
 using OpenAI;
 using OpenAI.Chat;
+using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 var app = builder.Build();
