@@ -10,8 +10,6 @@ var app = builder.Build();
 // CONFIG OPENAI
 var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY");
 
-Console.WriteLine("API KEY DEBUG: " + Environment.GetEnvironmentVariable("OPENAI_API_KEY"));
-
 if (string.IsNullOrEmpty(apiKey))
 {
     throw new Exception("ERRO: Defina a variável de ambiente OPENAI_API_KEY");
@@ -150,52 +148,58 @@ string ExtrairTexto(JsonElement root)
 // Função IA + fallback
 async Task<string> ProcessChat(ChatRequest req)
 {
-    var msg = req.Mensagem.Trim();
+    await AppState.Lock.WaitAsync();
+    try
+    {
 
-    using var conn = new SqliteConnection("Data Source=aqua.db");
-    conn.Open();
+        Console.WriteLine("PROCESSCHAT INICIO: " + DateTime.Now);
 
-    var conhecimento = BuscarConhecimento(conn, msg, 1);
+        var msg = req.Mensagem.Trim();
 
-    // Salvar mensagem usuário
-    var cmdUser = conn.CreateCommand();
-    cmdUser.CommandText = @"
+        using var conn = new SqliteConnection("Data Source=aqua.db");
+        conn.Open();
+
+        var conhecimento = BuscarConhecimento(conn, msg, 1);
+
+        // Salvar mensagem usuário
+        var cmdUser = conn.CreateCommand();
+        cmdUser.CommandText = @"
         INSERT INTO Mensagens (Tanque, Remetente, Mensagem, Data)
         VALUES ('1', 'user', $msg, $data)
     ";
-    cmdUser.Parameters.AddWithValue("$msg", msg);
-    cmdUser.Parameters.AddWithValue("$data", DateTime.Now.ToString("s"));
-    cmdUser.ExecuteNonQuery();
+        cmdUser.Parameters.AddWithValue("$msg", msg);
+        cmdUser.Parameters.AddWithValue("$data", DateTime.Now.ToString("s"));
+        cmdUser.ExecuteNonQuery();
 
-    // Buscar última leitura
-    var cmdRead = conn.CreateCommand();
-    cmdRead.CommandText = @"
+        // Buscar última leitura
+        var cmdRead = conn.CreateCommand();
+        cmdRead.CommandText = @"
         SELECT Temperatura, Ph, Oxigenio 
         FROM Leituras 
         WHERE Tanque = '1'
         ORDER BY Id DESC LIMIT 1
     ";
 
-    using var reader = cmdRead.ExecuteReader();
+        using var reader = cmdRead.ExecuteReader();
 
-    double? temp = null, ph = null, oxi = null;
-    if (reader.Read())
-    {
-        temp = reader.IsDBNull(0) ? null : reader.GetDouble(0);
-        ph = reader.IsDBNull(1) ? null : reader.GetDouble(1);
-        oxi = reader.IsDBNull(2) ? null : reader.GetDouble(2);
-    }
+        double? temp = null, ph = null, oxi = null;
+        if (reader.Read())
+        {
+            temp = reader.IsDBNull(0) ? null : reader.GetDouble(0);
+            ph = reader.IsDBNull(1) ? null : reader.GetDouble(1);
+            oxi = reader.IsDBNull(2) ? null : reader.GetDouble(2);
+        }
 
 
-    string resposta = "";
+        string resposta = "";
 
-    try
-    {
-        string contextoFormatado = string.IsNullOrWhiteSpace(conhecimento)
-            ? "Nenhum contexto adicional encontrado."
-            : string.Join("\n", conhecimento.Split('\n').Select(c => "- " + c));
+        try
+        {
+            string contextoFormatado = string.IsNullOrWhiteSpace(conhecimento)
+                ? "Nenhum contexto adicional encontrado."
+                : string.Join("\n", conhecimento.Split('\n').Select(c => "- " + c));
 
-        var prompt = $@"
+            var prompt = $@"
         Você é um especialista em aquicultura.
 
         Faça 5 perguntas que você precisaria saber as respostas para sugerir melhorias no meu processo diariamente.
@@ -218,85 +222,92 @@ async Task<string> ProcessChat(ChatRequest req)
         {msg}
         ";
 
-        using var http = new HttpClient
+            using var http = new HttpClient
+            {
+                Timeout = TimeSpan.FromSeconds(20)
+            };
+
+            http.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
+
+            var requestBody = new
+            {
+                model = "gpt-4.1-mini",
+                input = $"Você é um especialista em aquicultura.\n\n{prompt}"
+            };
+
+            var response = await http.PostAsJsonAsync(
+                "https://api.openai.com/v1/responses",
+                requestBody
+            );
+
+            // DEBUG REAL
+            var raw = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                Console.WriteLine("OPENAI ERROR:");
+                Console.WriteLine(raw);
+
+                throw new Exception($"Erro OpenAI: {response.StatusCode} - {raw}");
+            }
+
+            // Parse seguro
+            using var doc = System.Text.Json.JsonDocument.Parse(raw);
+
+            var root = doc.RootElement;
+
+            resposta = ExtrairTexto(root);
+
+            if (string.IsNullOrWhiteSpace(resposta))
+            {
+                Console.WriteLine("DEBUG: resposta vazia da OpenAI");
+                resposta = "Não consegui interpretar a resposta da IA. Tente novamente.";
+            }
+
+        }
+        catch (Exception ex)
         {
-            Timeout = TimeSpan.FromSeconds(20)
-        };
+            Console.WriteLine("PROCESSCHAT ERROR:");
+            Console.WriteLine(ex.ToString());
 
-        http.DefaultRequestHeaders.Authorization =
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
+            // fallback
+            var msgLower = msg.ToLower();
 
-        var requestBody = new
-        {
-            model = "gpt-4.1-mini",
-            input = $"Você é um especialista em aquicultura.\n\n{prompt}"
-        };
+            if (msgLower.Contains("oxigenio"))
+                resposta += oxi < 5 ? "Oxigênio baixo!\n" : "Oxigênio ok.\n";
+            if (msgLower.Contains("ph"))
+                resposta += (ph < 6.5 || ph > 8.5) ? "pH fora do ideal!\n" : "pH ok.\n";
+            if (msgLower.Contains("temperatura"))
+                resposta += temp > 30 ? "Temperatura alta!\n" : "Temperatura ok.\n";
 
-        var response = await http.PostAsJsonAsync(
-            "https://api.openai.com/v1/responses",
-            requestBody
-        );
+            if (string.IsNullOrWhiteSpace(resposta))
+                resposta = $"Resumo: Temp {temp}°C, pH {ph}, Oxigênio {oxi}";
 
-        // DEBUG REAL
-        var raw = await response.Content.ReadAsStringAsync();
-        Console.WriteLine("RESPOSTA OPENAI:");
-        Console.WriteLine(raw);
-
-        if (!response.IsSuccessStatusCode)
-        {
-            var error = await response.Content.ReadAsStringAsync();
-
-            Console.WriteLine("OPENAI ERROR:");
-            Console.WriteLine(error);
-
-            throw new Exception($"Erro na OpenAI: {response.StatusCode} - {error}");
+            resposta += $"\n\n(IA indisponível: {ex.Message})";
         }
 
-        // Parse seguro
-        using var doc = System.Text.Json.JsonDocument.Parse(raw);
-
-        var root = doc.RootElement;
-
-        resposta = ExtrairTexto(root);
-
-        if (string.IsNullOrWhiteSpace(resposta))
-        {
-            Console.WriteLine("DEBUG: resposta vazia da OpenAI");
-            resposta = "Não consegui interpretar a resposta da IA. Tente novamente.";
-        }
-
-    }
-    catch (Exception ex)
-    {
-        // fallback
-        var msgLower = msg.ToLower();
-
-        if (msgLower.Contains("oxigenio"))
-            resposta += oxi < 5 ? "Oxigênio baixo!\n" : "Oxigênio ok.\n";
-        if (msgLower.Contains("ph"))
-            resposta += (ph < 6.5 || ph > 8.5) ? "pH fora do ideal!\n" : "pH ok.\n";
-        if (msgLower.Contains("temperatura"))
-            resposta += temp > 30 ? "Temperatura alta!\n" : "Temperatura ok.\n";
-
-        if (string.IsNullOrWhiteSpace(resposta))
-            resposta = $"Resumo: Temp {temp}°C, pH {ph}, Oxigênio {oxi}";
-
-        resposta += $"\n\n(IA indisponível: {ex.Message})";
-    }
-
-    // Salvar resposta
-    var cmdBot = conn.CreateCommand();
-    cmdBot.CommandText = @"
+        // Salvar resposta
+        var cmdBot = conn.CreateCommand();
+        cmdBot.CommandText = @"
         INSERT INTO Mensagens (Tanque, Remetente, Mensagem, Data)
         VALUES ('1', 'bot', $msg, $data)
     ";
-    resposta = resposta.Trim();
-    cmdBot.Parameters.AddWithValue("$msg", resposta);
-    cmdBot.Parameters.AddWithValue("$data", DateTime.Now.ToString("s"));
-    cmdBot.ExecuteNonQuery();
+        resposta = resposta.Trim();
+        cmdBot.Parameters.AddWithValue("$msg", resposta);
+        cmdBot.Parameters.AddWithValue("$data", DateTime.Now.ToString("s"));
+        cmdBot.ExecuteNonQuery();
 
-    return resposta.Trim();
-    //return "IA OK - TESTE TWILIO";
+        Console.WriteLine("PROCESSCHAT FIM: " + DateTime.Now);
+
+        return resposta.Trim();
+
+    }
+    finally
+    {
+        AppState.Lock.Release();
+    }
+
 }
 
 // Chat endpoint
@@ -407,4 +418,9 @@ record ConhecimentoRequest
     public string Conteudo { get; set; } = "";
     public string Tags { get; set; } = "";
     public string? CriadoPor { get; set; }
+}
+
+class AppState
+{
+    public static SemaphoreSlim Lock = new SemaphoreSlim(1, 1);
 }
