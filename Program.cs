@@ -145,6 +145,24 @@ string ExtrairTexto(JsonElement root)
     return "";
 }
 
+// Função de validação da pergunta por palavra-chave
+bool PerguntaValida(string pergunta)
+{
+    if (string.IsNullOrWhiteSpace(pergunta))
+        return false;
+
+    var texto = pergunta.ToLower();
+
+    var palavrasChave = new[]
+    {
+        "tanque", "peixe", "água", "oxigênio", "ph",
+        "amônia", "ração", "aeração", "mortalidade",
+        "biomassa", "densidade", "qualidade"
+    };
+
+    return palavrasChave.Any(p => texto.Contains(p));
+}
+
 // Função IA + fallback
 async Task<string> ProcessChat(ChatRequest req)
 {
@@ -190,7 +208,7 @@ async Task<string> ProcessChat(ChatRequest req)
         // Buscar última leitura
         double? temp = null, ph = null, oxi = null;
 
-        // 📊 BUSCAR LEITURA (CONEXÃO ISOLADA)
+        //BUSCAR LEITURA (CONEXÃO ISOLADA)
         using (var conn = new SqliteConnection("Data Source=aqua.db"))
         {
             conn.Open();
@@ -246,6 +264,7 @@ async Task<string> ProcessChat(ChatRequest req)
             - Seja claro, direto e útil
             - Máximo 10 linhas
             - Use linguagem prática (como orientação de campo)
+            - Nunca forneça recomendações que possam causar risco sem alertar claramente.
             - Se houver risco, destaque o risco primeiro
 
             PERGUNTA:
@@ -353,13 +372,26 @@ async Task<string> ProcessChat(ChatRequest req)
 
 }
 
-// Chat endpoint
 app.MapPost("/chat", async (HttpContext context) =>
 {
     var req = await context.Request.ReadFromJsonAsync<ChatRequest>();
     if (req == null) return Results.Ok("Mensagem inválida.");
+
+    var msg = req.Mensagem;
+
+    // valida só contexto
+    if (!PerguntaValida(req.Mensagem))
+    {
+        return Results.Ok(new
+        {
+            resposta = "Posso ajudar apenas com aquicultura."
+        });
+    }
+
+    //Só chega aqui se for válido
     return Results.Ok(await ProcessChat(req));
 });
+
 
 // WhatsApp (Twilio)
 app.MapPost("/whatsapp", async (HttpContext context) =>
@@ -467,3 +499,4 @@ class AppState
 {
     public static SemaphoreSlim Lock = new SemaphoreSlim(1, 1);
 }
+
