@@ -9,8 +9,6 @@ builder.WebHost.UseWebRoot("wwwroot");
 
 var app = builder.Build();
 
-app.UseStaticFiles();
-
 // CONFIG OPENAI
 var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY");
 
@@ -468,9 +466,10 @@ app.MapPost("/upload", async (HttpContext context) =>
 
     clienteId = clienteId.Trim().ToLower().Replace(" ", "-");
 
+    var env = app.Environment;
+
     var uploadsPath = Path.Combine(
-        Directory.GetCurrentDirectory(),
-        "wwwroot",
+        env.WebRootPath,
         "uploads",
         clienteId
     );
@@ -490,7 +489,7 @@ app.MapPost("/upload", async (HttpContext context) =>
 
     Console.WriteLine("SALVANDO EM: " + filePath);
 
-    var url = $"https://{context.Request.Host}/uploads/{clienteId}/{fileName}"; //alterei
+    var url = $"{context.Request.Scheme}://{context.Request.Host}/uploads/{clienteId}/{fileName}";
 
     return Results.Ok(new { url });
 });
