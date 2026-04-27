@@ -5,6 +5,32 @@ using OpenAI.Chat;
 using System.Text.Json;
 using Microsoft.AspNetCore.HttpOverrides;
 
+const string PROMPT_BASE = @"
+Você é um especialista em aquicultura.
+
+REGRAS:
+- Responda apenas sobre aquicultura.
+- Seja direto, técnico e prático.
+- Não solicite dados ao usuário automaticamente.
+- Sempre tente responder com base no que estiver disponível.
+
+IMAGENS:
+- Se houver imagem, analise primeiro.
+- Descreva o que vê antes de qualquer conclusão.
+- Use a imagem como principal fonte de informação.
+- Só diga que precisa de mais dados se a imagem for inútil.
+
+SENSORES:
+- Temperatura, pH e oxigênio são opcionais.
+- Nunca peça esses dados como requisito.
+- Use apenas se já estiverem disponíveis.
+
+COMPORTAMENTO:
+- Não force diagnóstico sem evidência.
+- Se houver limitação, diga claramente.
+- Evite respostas genéricas.
+";
+
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseWebRoot("wwwroot");
 
@@ -95,31 +121,18 @@ async Task<string> AnalisarImagemIA(string url)
                 {
                     new
                     {
-                        type = "input_text",
-                        text = @"
-                        Você é um especialista em aquicultura.
+                        text = PROMPT_BASE + @"
 
-                        Analise a imagem enviada e siga estas regras:
+                        TAREFA:
+                        Analise a imagem enviada.
 
-                        1. PRIMEIRO, identifique o conteúdo da imagem:
-                        - Pode ser tanque, viveiro, camarão, peixe, estrutura de fazenda, equipamento, ou outro contexto relacionado.
-                        - Se não for relacionado à aquicultura, informe isso claramente.
-
-                        2. Se a imagem estiver fora de foco, escura, muito distante ou sem nitidez suficiente:
-                        - Informe que a qualidade da imagem é insuficiente para análise confiável.
-                        - Evite conclusões técnicas.
-
-                        3. Se a imagem for relevante para aquicultura:
-                        - Descreva o que está visível.
-                        - Indique possíveis sinais de estresse em organismos (se houver visibilidade).
-                        - Avalie possíveis condições operacionais (água, ambiente, manejo), mas SEM inventar dados.
-
-                        4. Nunca force diagnóstico se não houver evidência visual suficiente.
-
-                        5. Seja conservador e técnico, priorizando segurança operacional.
-
-                        Responda de forma curta e objetiva.
-                        "                    },
+                        - Descreva o que você vê primeiro.
+                        - Identifique se há relação com aquicultura.
+                        - Se não houver, diga claramente.
+                        - Se a imagem estiver ruim, informe limitação.
+                        - Só depois faça análise técnica se houver evidência.
+                        "
+                 },
                     new
                     {
                         type = "input_image",
@@ -329,41 +342,10 @@ async Task<string> ProcessChat(ChatRequest req)
                 : "Nenhum contexto adicional encontrado.";
 
             var prompt = $@"
-            Você é um especialista em aquicultura focado em operação de tanques.
+            {PROMPT_BASE}
 
-            REGRAS IMPORTANTES:
-            - Responda SOMENTE sobre aquicultura.
-            - Se a pergunta não for relacionada, diga educadamente que só pode ajudar com aquicultura.
-            - Nunca invente dados técnicos ou valores.
-            - Se não tiver informação suficiente, peça mais dados antes de concluir.
-            - Prefira recomendações seguras e conservadoras.
-            - Evite qualquer suposição não baseada nos dados fornecidos.
-            - Não responda perguntas fora do contexto técnico do sistema.
-            - Se existir BASE DE CONHECIMENTO, priorize sua resposta primeiro utilizando ela.
-
-            BASE DE CONHECIMENTO (PRIORIDADE MÁXIMA):
+            BASE DE CONHECIMENTO:
             {contextoFormatado}
-
-            REGRAS CRÍTICAS:
-            - Use PRIORITARIAMENTE a base de conhecimento acima.
-            - Se a resposta estiver na base, NÃO use conhecimento externo.
-            - NÃO contradiga a base de conhecimento.
-            - Só utilize conhecimento geral se a base não contiver a resposta.
-            - Se houver dúvida ou conflito, peça mais dados ao usuário.
-            - Evite respostas genéricas.
-            - Prefira repetir ou adaptar o conteúdo da base de conhecimento.
-
-            DADOS DO TANQUE:
-            - Temperatura: {(temp.HasValue ? temp.Value.ToString() : "sem leitura")}
-            - pH: {(ph.HasValue ? ph.Value.ToString() : "sem leitura")}
-            - Oxigênio dissolvido: {(oxi.HasValue ? oxi.Value.ToString() : "sem leitura")}
-
-            INSTRUÇÕES DE RESPOSTA:
-            - Seja claro, direto e útil
-            - Máximo 10 linhas
-            - Use linguagem prática (como orientação de campo)
-            - Nunca forneça recomendações que possam causar risco sem alertar claramente.
-            - Se houver risco, destaque o risco primeiro
 
             PERGUNTA:
             {msg}
@@ -380,7 +362,7 @@ async Task<string> ProcessChat(ChatRequest req)
             var requestBody = new
             {
                 model = "gpt-4.1-mini",
-                input = $"Você é um especialista em aquicultura.\n\n{prompt}"
+                input = prompt
             };
 
             var response = await http.PostAsJsonAsync(
