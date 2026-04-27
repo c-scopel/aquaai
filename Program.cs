@@ -236,9 +236,11 @@ async Task<string> ProcessChat(ChatRequest req)
 
         try
         {
-            string contextoFormatado = string.IsNullOrWhiteSpace(conhecimento)
-                ? "Nenhum contexto adicional encontrado."
-                : string.Join("\n", conhecimento.Split('\n').Select(c => "- " + c));
+            bool temConhecimento = !string.IsNullOrWhiteSpace(conhecimento);
+
+            string contextoFormatado = temConhecimento
+                ? string.Join("\n", conhecimento.Split('\n').Select(c => "- " + c))
+                : "Nenhum contexto adicional encontrado.";
 
             var prompt = $@"
             Você é um especialista em aquicultura focado em operação de tanques.
@@ -251,9 +253,19 @@ async Task<string> ProcessChat(ChatRequest req)
             - Prefira recomendações seguras e conservadoras.
             - Evite qualquer suposição não baseada nos dados fornecidos.
             - Não responda perguntas fora do contexto técnico do sistema.
+            - Se existir BASE DE CONHECIMENTO, priorize sua resposta primeiro utilizando ela.
 
-            CONTEXTO TÉCNICO:
+            BASE DE CONHECIMENTO (PRIORIDADE MÁXIMA):
             {contextoFormatado}
+
+            REGRAS CRÍTICAS:
+            - Use PRIORITARIAMENTE a base de conhecimento acima.
+            - Se a resposta estiver na base, NÃO use conhecimento externo.
+            - NÃO contradiga a base de conhecimento.
+            - Só utilize conhecimento geral se a base não contiver a resposta.
+            - Se houver dúvida ou conflito, peça mais dados ao usuário.
+            - Evite respostas genéricas.
+            - Prefira repetir ou adaptar o conteúdo da base de conhecimento.
 
             DADOS DO TANQUE:
             - Temperatura: {(temp.HasValue ? temp.Value.ToString() : "sem leitura")}
@@ -372,6 +384,7 @@ async Task<string> ProcessChat(ChatRequest req)
 
 }
 
+
 app.MapPost("/chat", async (HttpContext context) =>
 {
     var req = await context.Request.ReadFromJsonAsync<ChatRequest>();
@@ -430,6 +443,50 @@ app.MapPost("/conhecimento", async (HttpContext context) =>
     cmd.ExecuteNonQuery();
 
     return Results.Ok("Conhecimento salvo!");
+});
+
+// Uploads
+app.MapPost("/upload", async (HttpContext context) =>
+{
+    var form = await context.Request.ReadFormAsync();
+
+    var file = form.Files.FirstOrDefault();
+    var clienteId = form["clienteId"].ToString();
+
+    if (string.IsNullOrWhiteSpace(clienteId))
+        return Results.BadRequest("clienteId é obrigatório.");
+
+    if (file == null || file.Length == 0)
+        return Results.BadRequest("Nenhuma imagem enviada.");
+
+    if (!file.ContentType.StartsWith("image/"))
+        return Results.BadRequest("Arquivo deve ser imagem.");
+
+    clienteId = clienteId.Trim().ToLower().Replace(" ", "-");
+
+    var uploadsPath = Path.Combine(
+        Directory.GetCurrentDirectory(),
+        "wwwroot",
+        "uploads",
+        clienteId
+    );
+
+    // 🔥 AQUI É O PONTO IMPORTANTE
+    // cria a pasta automaticamente no servidor
+    if (!Directory.Exists(uploadsPath))
+        Directory.CreateDirectory(uploadsPath);
+
+    var fileName = $"{Guid.NewGuid()}{Path.GetExtension(file.FileName)}";
+    var filePath = Path.Combine(uploadsPath, fileName);
+
+    using (var stream = File.Create(filePath))
+    {
+        await file.CopyToAsync(stream);
+    }
+
+    var url = $"{context.Request.Scheme}://{context.Request.Host}/uploads/{clienteId}/{fileName}";
+
+    return Results.Ok(new { url });
 });
 
 // Histórico
