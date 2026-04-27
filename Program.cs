@@ -314,11 +314,11 @@ async Task<string> ProcessChat(ChatRequest req)
 
             var cmd = conn.CreateCommand();
             cmd.CommandText = @"
-        SELECT Temperatura, Ph, Oxigenio 
-        FROM Leituras 
-        WHERE Tanque = '1'
-        ORDER BY Id DESC 
-        LIMIT 1
+            SELECT Temperatura, Ph, Oxigenio 
+            FROM Leituras 
+            WHERE Tanque = '1'
+            ORDER BY Id DESC 
+            LIMIT 1
     ";
 
             using var reader = cmd.ExecuteReader();
