@@ -484,6 +484,8 @@ app.MapPost("/upload", async (HttpContext context) =>
         await file.CopyToAsync(stream);
     }
 
+    Console.WriteLine("SALVANDO EM: " + filePath);
+
     var url = $"{context.Request.Scheme}://{context.Request.Host}/uploads/{clienteId}/{fileName}";
 
     return Results.Ok(new { url });
