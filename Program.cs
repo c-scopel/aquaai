@@ -122,6 +122,7 @@ async Task<string> AnalisarImagemIA(string url)
                 {
                     new
                     {
+                        type = "input_text",
                         text = PROMPT_BASE + @"
 
                         TAREFA:
@@ -133,8 +134,7 @@ async Task<string> AnalisarImagemIA(string url)
                         - Se a imagem estiver ruim, informe limitação.
                         - Só depois faça análise técnica se houver evidência.
                         "
-                 },
-                    new
+                    },                    new
                     {
                         type = "input_image",
                         image_url = url
