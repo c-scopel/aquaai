@@ -483,50 +483,101 @@ app.MapPost("/whatsapp", async (HttpContext context) =>
     var body = form["Body"].ToString();
     var numMedia = form["NumMedia"].ToString();
 
-    string resposta;
+    string resposta = "";
 
-    // SE VEIO IMAGEM
+    Console.WriteLine("===== NOVA REQUISIÇÃO WHATSAPP =====");
+    Console.WriteLine("Body: " + body);
+    Console.WriteLine("NumMedia: " + numMedia);
+
+    // ============================
+    // 📸 FLUXO DE IMAGEM
+    // ============================
     if (!string.IsNullOrEmpty(numMedia) && numMedia != "0")
     {
         var mediaUrl = form["MediaUrl0"].ToString();
 
-        var accountSid = Environment.GetEnvironmentVariable("TWILIO_ACCOUNT_SID");
-        var authToken = Environment.GetEnvironmentVariable("TWILIO_AUTH_TOKEN");
+        Console.WriteLine("IMAGEM DETECTADA");
+        Console.WriteLine("MediaUrl0: " + mediaUrl);
 
-        using var http = new HttpClient();
+        try
+        {
+            var accountSid = Environment.GetEnvironmentVariable("TWILIO_ACCOUNT_SID");
+            var authToken = Environment.GetEnvironmentVariable("TWILIO_AUTH_TOKEN");
 
-        var byteArray = System.Text.Encoding.ASCII.GetBytes($"{accountSid}:{authToken}");
-        http.DefaultRequestHeaders.Authorization =
-            new System.Net.Http.Headers.AuthenticationHeaderValue(
-                "Basic",
-                Convert.ToBase64String(byteArray)
-            );
+            using var http = new HttpClient();
 
-        var imageBytes = await http.GetByteArrayAsync(mediaUrl);
+            var byteArray = System.Text.Encoding.ASCII.GetBytes($"{accountSid}:{authToken}");
+            http.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue(
+                    "Basic",
+                    Convert.ToBase64String(byteArray)
+                );
 
-        var uploadsPath = Path.Combine(app.Environment.WebRootPath, "uploads");
-        Directory.CreateDirectory(uploadsPath);
+            Console.WriteLine("BAIXANDO IMAGEM...");
 
-        var fileName = $"{Guid.NewGuid()}.jpg";
-        var filePath = Path.Combine(uploadsPath, fileName);
+            var imageBytes = await http.GetByteArrayAsync(mediaUrl);
 
-        await File.WriteAllBytesAsync(filePath, imageBytes);
+            Console.WriteLine("DOWNLOAD OK");
 
-        var publicUrl = $"{context.Request.Scheme}://{context.Request.Host}/uploads/{fileName}";
+            var uploadsPath = Path.Combine(app.Environment.WebRootPath, "uploads");
+            Directory.CreateDirectory(uploadsPath);
 
-        Console.WriteLine("MEDIA URL TWILIO: " + mediaUrl);
-        Console.WriteLine("SALVANDO EM: " + filePath);
-        Console.WriteLine("PUBLIC URL: " + publicUrl);
+            var fileName = $"{Guid.NewGuid()}.jpg";
+            var filePath = Path.Combine(uploadsPath, fileName);
 
-        resposta = await AnalisarImagemIA(publicUrl);
+            await File.WriteAllBytesAsync(filePath, imageBytes);
+
+            var publicUrl = $"{context.Request.Scheme}://{context.Request.Host}/uploads/{fileName}";
+
+            Console.WriteLine("SALVO EM: " + filePath);
+            Console.WriteLine("PUBLIC URL: " + publicUrl);
+
+            Console.WriteLine("ENVIANDO PARA IA...");
+
+            resposta = await AnalisarImagemIA(publicUrl);
+
+            Console.WriteLine("RESPOSTA IA: " + resposta);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("ERRO AO PROCESSAR IMAGEM: " + ex.ToString());
+
+            resposta = "Não consegui processar a imagem. Tente enviar novamente.";
+        }
     }
     else
     {
-        resposta = await ProcessChat(new ChatRequest { Mensagem = body });
+        // ============================
+        // 💬 FLUXO DE TEXTO
+        // ============================
+        Console.WriteLine("TEXTO DETECTADO");
+
+        try
+        {
+            resposta = await ProcessChat(new ChatRequest { Mensagem = body });
+
+            Console.WriteLine("RESPOSTA CHAT: " + resposta);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("ERRO NO CHAT: " + ex.ToString());
+
+            resposta = "Erro ao processar sua mensagem. Tente novamente.";
+        }
     }
 
+    // ============================
+    // 🛡️ FALLBACK FINAL
+    // ============================
+    if (string.IsNullOrWhiteSpace(resposta))
+    {
+        resposta = "Recebi sua mensagem, mas não consegui gerar uma resposta. Tente novamente.";
+    }
+
+    Console.WriteLine("RESPOSTA FINAL: " + resposta);
+
     return Results.Content(
-        $"<Response><Message>{WebUtility.HtmlEncode(resposta)}</Message></Response>",
+        $"<Response><Message>{System.Net.WebUtility.HtmlEncode(resposta)}</Message></Response>",
         "text/xml"
     );
 });
