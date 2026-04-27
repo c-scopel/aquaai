@@ -1,4 +1,4 @@
-//9
+//11
 using Microsoft.Data.Sqlite;
 using System.Net;
 using OpenAI;
@@ -273,7 +273,7 @@ async Task<string> ProcessChat(ChatRequest req)
 
         var msg = req.Mensagem.Trim();
 
-        // 🔎 BUSCAR CONHECIMENTO (CONEXÃO PRÓPRIA)
+        // ?? BUSCAR CONHECIMENTO (CONEXÃO PRÓPRIA)
         string conhecimento;
 
         using (var conn = new SqliteConnection("Data Source=aqua.db"))
@@ -479,9 +479,23 @@ app.MapPost("/chat", async (HttpContext context) =>
 app.MapPost("/whatsapp", async (HttpContext context) =>
 {
     var form = await context.Request.ReadFormAsync();
-    var body = form["Body"].ToString();
 
-    var resposta = await ProcessChat(new ChatRequest { Mensagem = body });
+    var body = form["Body"].ToString();
+    var numMedia = form["NumMedia"].ToString();
+
+    string resposta;
+
+    // SE VEIO IMAGEM
+    if (numMedia != "0")
+    {
+        var mediaUrl = form["MediaUrl0"].ToString();
+
+        resposta = await AnalisarImagemIA(mediaUrl);
+    }
+    else
+    {
+        resposta = await ProcessChat(new ChatRequest { Mensagem = body });
+    }
 
     return Results.Content(
         $"<Response><Message>{WebUtility.HtmlEncode(resposta)}</Message></Response>",
@@ -541,7 +555,7 @@ app.MapPost("/upload", async (HttpContext context) =>
         clienteId
     );
 
-    // 🔥 AQUI É O PONTO IMPORTANTE
+    // ?? AQUI É O PONTO IMPORTANTE
     // cria a pasta automaticamente no servidor
     if (!Directory.Exists(uploadsPath))
         Directory.CreateDirectory(uploadsPath);
@@ -635,4 +649,3 @@ class AppState
 {
     public static SemaphoreSlim Lock = new SemaphoreSlim(1, 1);
 }
-
