@@ -504,6 +504,9 @@ app.MapPost("/whatsapp", async (HttpContext context) =>
             var accountSid = Environment.GetEnvironmentVariable("TWILIO_ACCOUNT_SID");
             var authToken = Environment.GetEnvironmentVariable("TWILIO_AUTH_TOKEN");
 
+            Console.WriteLine("SID: " + accountSid);
+            Console.WriteLine("TOKEN: " + (string.IsNullOrEmpty(authToken) ? "VAZIO" : "OK"));
+
             var handler = new HttpClientHandler
             {
                 Credentials = new NetworkCredential(accountSid, authToken)
