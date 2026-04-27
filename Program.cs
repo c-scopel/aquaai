@@ -5,7 +5,11 @@ using OpenAI.Chat;
 using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.WebHost.UseWebRoot("wwwroot");
+
 var app = builder.Build();
+
+app.UseStaticFiles();
 
 // CONFIG OPENAI
 var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY");
