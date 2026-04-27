@@ -490,7 +490,7 @@ app.MapPost("/upload", async (HttpContext context) =>
 
     Console.WriteLine("SALVANDO EM: " + filePath);
 
-    var url = $"https://{context.Request.Host}/uploads/{clienteId}/{fileName}";
+    var url = $"https://{context.Request.Host}/uploads/{clienteId}/{fileName}"; //alterei
 
     return Results.Ok(new { url });
 });
