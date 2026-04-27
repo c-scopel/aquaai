@@ -490,7 +490,7 @@ app.MapPost("/whatsapp", async (HttpContext context) =>
     Console.WriteLine("NumMedia: " + numMedia);
 
     // ============================
-    // 📸 FLUXO DE IMAGEM
+    // FLUXO DE IMAGEM
     // ============================
     if (!string.IsNullOrEmpty(numMedia) && numMedia != "0")
     {
@@ -504,18 +504,27 @@ app.MapPost("/whatsapp", async (HttpContext context) =>
             var accountSid = Environment.GetEnvironmentVariable("TWILIO_ACCOUNT_SID");
             var authToken = Environment.GetEnvironmentVariable("TWILIO_AUTH_TOKEN");
 
-            using var http = new HttpClient();
+            var handler = new HttpClientHandler
+            {
+                Credentials = new NetworkCredential(accountSid, authToken)
+            };
 
-            var byteArray = System.Text.Encoding.ASCII.GetBytes($"{accountSid}:{authToken}");
-            http.DefaultRequestHeaders.Authorization =
-                new System.Net.Http.Headers.AuthenticationHeaderValue(
-                    "Basic",
-                    Convert.ToBase64String(byteArray)
-                );
+            using var http = new HttpClient(handler);
 
-            Console.WriteLine("BAIXANDO IMAGEM...");
+            http.DefaultRequestHeaders.Accept.Clear();
+            http.DefaultRequestHeaders.Accept.Add(
+                new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("*/*")
+            );
 
-            var imageBytes = await http.GetByteArrayAsync(mediaUrl);
+            Console.WriteLine("BAIXANDO IMAGEM COM AUTH...");
+
+            var response = await http.GetAsync(mediaUrl);
+
+            Console.WriteLine("STATUS DOWNLOAD: " + response.StatusCode);
+
+            response.EnsureSuccessStatusCode();
+
+            var imageBytes = await response.Content.ReadAsByteArrayAsync();
 
             Console.WriteLine("DOWNLOAD OK");
 
@@ -548,7 +557,7 @@ app.MapPost("/whatsapp", async (HttpContext context) =>
     else
     {
         // ============================
-        // 💬 FLUXO DE TEXTO
+        // FLUXO DE TEXTO
         // ============================
         Console.WriteLine("TEXTO DETECTADO");
 
@@ -567,7 +576,7 @@ app.MapPost("/whatsapp", async (HttpContext context) =>
     }
 
     // ============================
-    // 🛡️ FALLBACK FINAL
+    // FALLBACK FINAL
     // ============================
     if (string.IsNullOrWhiteSpace(resposta))
     {
