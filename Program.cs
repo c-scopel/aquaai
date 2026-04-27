@@ -73,6 +73,78 @@ using (var conn = new SqliteConnection("Data Source=aqua.db;Cache=Shared"))
 
 app.UseForwardedHeaders();
 
+async Task<string> AnalisarImagemIA(string url)
+{
+    using var http = new HttpClient
+    {
+        Timeout = TimeSpan.FromSeconds(30)
+    };
+
+    http.DefaultRequestHeaders.Authorization =
+        new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
+
+    var requestBody = new
+    {
+        model = "gpt-4.1-mini",
+        input = new object[]
+        {
+            new
+            {
+                role = "user",
+                content = new object[]
+                {
+                    new
+                    {
+                        type = "input_text",
+                        text = @"
+                        Você é um especialista em aquicultura.
+
+                        Analise a imagem enviada e siga estas regras:
+
+                        1. PRIMEIRO, identifique o conteúdo da imagem:
+                        - Pode ser tanque, viveiro, camarão, peixe, estrutura de fazenda, equipamento, ou outro contexto relacionado.
+                        - Se não for relacionado à aquicultura, informe isso claramente.
+
+                        2. Se a imagem estiver fora de foco, escura, muito distante ou sem nitidez suficiente:
+                        - Informe que a qualidade da imagem é insuficiente para análise confiável.
+                        - Evite conclusões técnicas.
+
+                        3. Se a imagem for relevante para aquicultura:
+                        - Descreva o que está visível.
+                        - Indique possíveis sinais de estresse em organismos (se houver visibilidade).
+                        - Avalie possíveis condições operacionais (água, ambiente, manejo), mas SEM inventar dados.
+
+                        4. Nunca force diagnóstico se não houver evidência visual suficiente.
+
+                        5. Seja conservador e técnico, priorizando segurança operacional.
+
+                        Responda de forma curta e objetiva.
+                        "                    },
+                    new
+                    {
+                        type = "input_image",
+                        image_url = url
+                    }
+                }
+            }
+        }
+    };
+
+    var response = await http.PostAsJsonAsync(
+        "https://api.openai.com/v1/responses",
+        requestBody
+    );
+
+    var raw = await response.Content.ReadAsStringAsync();
+
+    if (!response.IsSuccessStatusCode)
+        return $"Erro IA: {raw}";
+
+    using var doc = JsonDocument.Parse(raw);
+
+    return ExtrairTexto(doc.RootElement);
+}
+
 // Inserir leitura
 app.MapPost("/leitura", async (HttpContext context) =>
 {
@@ -503,7 +575,14 @@ app.MapPost("/upload", async (HttpContext context) =>
 
     var url = $"{context.Request.Scheme}://{context.Request.Host}/uploads/{clienteId}/{fileName}";
 
-    return Results.Ok(new { url });
+    // CHAMA IA AUTOMATICAMENTE
+    var analise = await AnalisarImagemIA(url);
+
+    return Results.Ok(new
+    {
+        url,
+        analise
+    });
 });
 
 // Histórico
