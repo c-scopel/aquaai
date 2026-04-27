@@ -486,11 +486,39 @@ app.MapPost("/whatsapp", async (HttpContext context) =>
     string resposta;
 
     // SE VEIO IMAGEM
-    if (numMedia != "0")
+    if (!string.IsNullOrEmpty(numMedia) && numMedia != "0")
     {
         var mediaUrl = form["MediaUrl0"].ToString();
 
-        resposta = await AnalisarImagemIA(mediaUrl);
+        var accountSid = Environment.GetEnvironmentVariable("TWILIO_ACCOUNT_SID");
+        var authToken = Environment.GetEnvironmentVariable("TWILIO_AUTH_TOKEN");
+
+        using var http = new HttpClient();
+
+        var byteArray = System.Text.Encoding.ASCII.GetBytes($"{accountSid}:{authToken}");
+        http.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue(
+                "Basic",
+                Convert.ToBase64String(byteArray)
+            );
+
+        var imageBytes = await http.GetByteArrayAsync(mediaUrl);
+
+        var uploadsPath = Path.Combine(app.Environment.WebRootPath, "uploads");
+        Directory.CreateDirectory(uploadsPath);
+
+        var fileName = $"{Guid.NewGuid()}.jpg";
+        var filePath = Path.Combine(uploadsPath, fileName);
+
+        await File.WriteAllBytesAsync(filePath, imageBytes);
+
+        var publicUrl = $"{context.Request.Scheme}://{context.Request.Host}/uploads/{fileName}";
+
+        Console.WriteLine("MEDIA URL TWILIO: " + mediaUrl);
+        Console.WriteLine("SALVANDO EM: " + filePath);
+        Console.WriteLine("PUBLIC URL: " + publicUrl);
+
+        resposta = await AnalisarImagemIA(publicUrl);
     }
     else
     {
@@ -503,6 +531,7 @@ app.MapPost("/whatsapp", async (HttpContext context) =>
     );
 });
 
+// CONHECIMENTO
 app.MapPost("/conhecimento", async (HttpContext context) =>
 {
     var item = await context.Request.ReadFromJsonAsync<ConhecimentoRequest>();
