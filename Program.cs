@@ -3,9 +3,19 @@ using System.Net;
 using OpenAI;
 using OpenAI.Chat;
 using System.Text.Json;
+using Microsoft.AspNetCore.HttpOverrides;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseWebRoot("wwwroot");
+
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders =
+        ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+
+    options.KnownIPNetworks.Clear();
+    options.KnownProxies.Clear();
+});
 
 var app = builder.Build();
 
@@ -60,6 +70,8 @@ using (var conn = new SqliteConnection("Data Source=aqua.db;Cache=Shared"))
     ";
     cmd.ExecuteNonQuery();
 }
+
+app.UseForwardedHeaders();
 
 // Inserir leitura
 app.MapPost("/leitura", async (HttpContext context) =>
