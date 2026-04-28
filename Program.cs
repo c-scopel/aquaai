@@ -33,6 +33,7 @@ COMPORTAMENTO:
 ";
 
 var builder = WebApplication.CreateBuilder(args);
+
 builder.WebHost.UseWebRoot("wwwroot");
 
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
@@ -53,8 +54,6 @@ if (string.IsNullOrEmpty(apiKey))
 {
     throw new Exception("ERRO: Defina a variável de ambiente OPENAI_API_KEY");
 }
-
-var openAI = new OpenAIClient(apiKey);
 
 // Criar tabelas
 using (var conn = new SqliteConnection("Data Source=aqua.db;Cache=Shared"))
@@ -93,6 +92,20 @@ using (var conn = new SqliteConnection("Data Source=aqua.db;Cache=Shared"))
             Tags TEXT,
             CriadoPor TEXT,
             Data TEXT
+        );
+    ";
+    cmd.ExecuteNonQuery();
+
+    cmd.CommandText = @"
+        CREATE TABLE IF NOT EXISTS InteracoesWhatsApp (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            DataHora TEXT,
+            ClienteId TEXT,
+            Telefone TEXT,
+            Tipo TEXT,
+            MensagemTexto TEXT,
+            UrlMidia TEXT,
+            RespostaIA TEXT
         );
     ";
     cmd.ExecuteNonQuery();
@@ -453,7 +466,106 @@ async Task<string> ProcessChat(ChatRequest req)
 
 }
 
+// FUNÇÃO DE SALVAR AS INTERAÇÕES DO WHATSAPP
+async Task SalvarInteracao(
+    string clienteId,
+    string telefone,
+    string tipo,
+    string mensagem,
+    string? urlMidia,
+    string resposta)
+{
+    using var conn = new SqliteConnection("Data Source=aqua.db;Cache=Shared");
+    await conn.OpenAsync();
 
+    var cmd = conn.CreateCommand();
+    cmd.CommandText = @"
+        INSERT INTO InteracoesWhatsApp
+        (ClienteId, Telefone, Tipo, MensagemTexto, UrlMidia, RespostaIA, DataHora)
+        VALUES ($clienteId, $telefone, $tipo, $mensagem, $urlMidia, $resposta, $data)
+    ";
+
+    cmd.Parameters.AddWithValue("$clienteId", clienteId);
+    cmd.Parameters.AddWithValue("$telefone", telefone);
+    cmd.Parameters.AddWithValue("$tipo", tipo);
+    cmd.Parameters.AddWithValue("$mensagem", mensagem ?? "");
+    cmd.Parameters.AddWithValue("$urlMidia", (object?)urlMidia ?? DBNull.Value);
+    cmd.Parameters.AddWithValue("$resposta", resposta ?? "");
+    cmd.Parameters.AddWithValue("$data", DateTime.Now.ToString("s"));
+
+    await cmd.ExecuteNonQueryAsync();
+}
+
+// FUNÇÃO DE TRANSCRIÇÃO
+async Task<string> TranscreverAudio(byte[] audioBytes)
+{
+    using var http = new HttpClient();
+
+    using var content = new MultipartFormDataContent();
+
+    var fileContent = new ByteArrayContent(audioBytes);
+    fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("audio/ogg");
+
+    content.Add(fileContent, "file", "audio.ogg");
+    content.Add(new StringContent("gpt-4o-mini-transcribe"), "model");
+
+    http.DefaultRequestHeaders.Authorization =
+        new System.Net.Http.Headers.AuthenticationHeaderValue(
+            "Bearer",
+            Environment.GetEnvironmentVariable("OPENAI_API_KEY")
+        );
+
+    var response = await http.PostAsync(
+        "https://api.openai.com/v1/audio/transcriptions",
+        content
+    );
+
+    var json = await response.Content.ReadAsStringAsync();
+
+    using var doc = JsonDocument.Parse(json);
+
+    var texto = doc.RootElement.GetProperty("text").GetString();
+
+    return texto ?? "";
+}
+
+string ObterExtensao(string contentType)
+{
+    if (string.IsNullOrWhiteSpace(contentType))
+        return "";
+
+    var partes = contentType.Split('/');
+
+    if (partes.Length != 2)
+        return "";
+
+    var ext = partes[1].ToLower();
+
+    // normalizações importantes
+    return ext switch
+    {
+        "jpeg" => ".jpg",
+        "pjpeg" => ".jpg",
+        "png" => ".png",
+        "webp" => ".webp",
+        "gif" => ".gif",
+        "heic" => ".heic",
+
+        "ogg" => ".ogg",
+        "mpeg" => ".mp3",
+        "mp3" => ".mp3",
+        "mp4" => ".mp4",
+        "aac" => ".aac",
+
+        _ => "." + ext // fallback inteligente
+    };
+}
+
+/////////////////
+/// ENDPOINTS ///
+/////////////////
+
+// CHAT
 app.MapPost("/chat", async (HttpContext context) =>
 {
     var req = await context.Request.ReadFromJsonAsync<ChatRequest>();
@@ -482,44 +594,40 @@ app.MapPost("/whatsapp", async (HttpContext context) =>
 
     var body = form["Body"].ToString();
     var numMedia = form["NumMedia"].ToString();
+    var telefone = form["From"].ToString();
+    var clienteId = telefone; // MVP
 
     string resposta = "";
 
     Console.WriteLine("===== NOVA REQUISIÇÃO WHATSAPP =====");
+    Console.WriteLine("Telefone: " + telefone);
     Console.WriteLine("Body: " + body);
     Console.WriteLine("NumMedia: " + numMedia);
 
-    // ============================
-    // FLUXO DE IMAGEM
-    // ============================
     if (!string.IsNullOrEmpty(numMedia) && numMedia != "0")
     {
         var mediaUrl = form["MediaUrl0"].ToString();
+        var contentType = form["MediaContentType0"].ToString();
 
-        Console.WriteLine("IMAGEM DETECTADA");
+        Console.WriteLine("MEDIA DETECTADA");
         Console.WriteLine("MediaUrl0: " + mediaUrl);
+        Console.WriteLine("ContentType: " + contentType);
 
         try
         {
             var accountSid = Environment.GetEnvironmentVariable("TWILIO_ACCOUNT_SID");
             var authToken = Environment.GetEnvironmentVariable("TWILIO_AUTH_TOKEN");
 
-            Console.WriteLine("SID: " + accountSid);
-            Console.WriteLine("TOKEN: " + (string.IsNullOrEmpty(authToken) ? "VAZIO" : "OK"));
+            using var http = new HttpClient();
 
-            var handler = new HttpClientHandler
-            {
-                Credentials = new NetworkCredential(accountSid, authToken)
-            };
+            var byteArray = System.Text.Encoding.ASCII.GetBytes($"{accountSid}:{authToken}");
+            http.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue(
+                    "Basic",
+                    Convert.ToBase64String(byteArray)
+                );
 
-            using var http = new HttpClient(handler);
-
-            http.DefaultRequestHeaders.Accept.Clear();
-            http.DefaultRequestHeaders.Accept.Add(
-                new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("*/*")
-            );
-
-            Console.WriteLine("BAIXANDO IMAGEM COM AUTH...");
+            Console.WriteLine("BAIXANDO MÍDIA...");
 
             var response = await http.GetAsync(mediaUrl);
 
@@ -527,63 +635,137 @@ app.MapPost("/whatsapp", async (HttpContext context) =>
 
             response.EnsureSuccessStatusCode();
 
-            var imageBytes = await response.Content.ReadAsByteArrayAsync();
-
-            Console.WriteLine("DOWNLOAD OK");
+            var mediaBytes = await response.Content.ReadAsByteArrayAsync();
 
             var uploadsPath = Path.Combine(app.Environment.WebRootPath, "uploads");
             Directory.CreateDirectory(uploadsPath);
 
-            var fileName = $"{Guid.NewGuid()}.jpg";
+            var extension = ObterExtensao(contentType);
+
+            if (string.IsNullOrEmpty(extension))
+                extension = ".bin";
+
+            var fileName = $"{Guid.NewGuid()}{extension}";
             var filePath = Path.Combine(uploadsPath, fileName);
 
-            await File.WriteAllBytesAsync(filePath, imageBytes);
+            await File.WriteAllBytesAsync(filePath, mediaBytes);
 
-            var publicUrl = $"{context.Request.Scheme}://{context.Request.Host}/uploads/{fileName}";
+            var baseUrl = Environment.GetEnvironmentVariable("BASE_URL")
+              ?? $"{context.Request.Scheme}://{context.Request.Host}";
 
-            Console.WriteLine("SALVO EM: " + filePath);
-            Console.WriteLine("PUBLIC URL: " + publicUrl);
+            var publicUrl = $"{baseUrl}/uploads/{fileName}";
 
-            Console.WriteLine("ENVIANDO PARA IA...");
 
-            resposta = await AnalisarImagemIA(publicUrl);
+            // ============================
+            // IMAGEM
+            // ============================
+            if (contentType.StartsWith("image"))
+            {
+                Console.WriteLine("PROCESSANDO IMAGEM");
 
-            Console.WriteLine("RESPOSTA IA: " + resposta);
+                resposta = await AnalisarImagemIA(publicUrl);
+
+                await SalvarInteracao(
+                    clienteId,
+                    telefone,
+                    contentType,
+                    "imagem recebida",
+                    publicUrl,
+                    resposta
+                );
+            }
+            // ============================
+            // ÁUDIO
+            // ============================
+            else if (contentType.StartsWith("audio"))
+            {
+                Console.WriteLine("PROCESSANDO ÁUDIO");
+
+                if (mediaBytes.Length == 0)
+                {
+                    resposta = "Áudio vazio ou inválido.";
+
+                    await SalvarInteracao(
+                        clienteId,
+                        telefone,
+                        contentType,
+                        "",
+                        publicUrl,
+                        resposta
+                    );
+                }
+                else
+                {
+                    var texto = await TranscreverAudio(mediaBytes);
+
+                    Console.WriteLine("TRANSCRIÇÃO: " + texto);
+
+                    resposta = await ProcessChat(new ChatRequest { Mensagem = texto });
+
+                    await SalvarInteracao(
+                        clienteId,
+                        telefone,
+                        contentType,
+                        texto,
+                        publicUrl,
+                        resposta
+                    );
+                }
+            }
         }
         catch (Exception ex)
         {
-            Console.WriteLine("ERRO AO PROCESSAR IMAGEM: " + ex.ToString());
+            Console.WriteLine("ERRO MÍDIA: " + ex.ToString());
 
-            resposta = "Não consegui processar a imagem. Tente enviar novamente.";
+            resposta = "Não consegui processar a mídia. Tente novamente.";
+
+            await SalvarInteracao(
+                clienteId,
+                telefone,
+                "erro",
+                body,
+                null,
+                resposta
+            );
         }
     }
     else
     {
-        // ============================
-        // FLUXO DE TEXTO
-        // ============================
-        Console.WriteLine("TEXTO DETECTADO");
+        Console.WriteLine("PROCESSANDO TEXTO");
 
         try
         {
             resposta = await ProcessChat(new ChatRequest { Mensagem = body });
 
-            Console.WriteLine("RESPOSTA CHAT: " + resposta);
+            await SalvarInteracao(
+                clienteId,
+                telefone,
+                "texto",
+                body,
+                null,
+                resposta
+            );
         }
         catch (Exception ex)
         {
-            Console.WriteLine("ERRO NO CHAT: " + ex.ToString());
+            Console.WriteLine("ERRO TEXTO: " + ex.ToString());
 
-            resposta = "Erro ao processar sua mensagem. Tente novamente.";
+            resposta = "Erro ao processar sua mensagem.";
+
+            await SalvarInteracao(
+                clienteId,
+                telefone,
+                "erro",
+                body,
+                null,
+                resposta
+            );
         }
     }
 
-    // ============================
-    // FALLBACK FINAL
-    // ============================
     if (string.IsNullOrWhiteSpace(resposta))
     {
-        resposta = "Recebi sua mensagem, mas não consegui gerar uma resposta. Tente novamente.";
+        resposta = "Não consegui gerar resposta.";
     }
 
     Console.WriteLine("RESPOSTA FINAL: " + resposta);
@@ -662,7 +844,10 @@ app.MapPost("/upload", async (HttpContext context) =>
 
     Console.WriteLine("SALVANDO EM: " + filePath);
 
-    var url = $"{context.Request.Scheme}://{context.Request.Host}/uploads/{clienteId}/{fileName}";
+    var baseUrl = Environment.GetEnvironmentVariable("BASE_URL")
+              ?? $"{context.Request.Scheme}://{context.Request.Host}";
+
+    var url = $"{baseUrl}/uploads/{clienteId}/{fileName}";
 
     // CHAMA IA AUTOMATICAMENTE
     var analise = await AnalisarImagemIA(url);
