@@ -681,6 +681,8 @@ app.MapPost("/whatsapp", async (HttpContext context) =>
             {
                 Console.WriteLine("PROCESSANDO ÁUDIO");
 
+                string texto;
+
                 if (mediaBytes.Length == 0)
                 {
                     resposta = "Áudio vazio ou inválido.";
@@ -688,29 +690,32 @@ app.MapPost("/whatsapp", async (HttpContext context) =>
                     await SalvarInteracao(
                         clienteId,
                         telefone,
-                        contentType,
+                        "audio",
                         "",
                         publicUrl,
                         resposta
                     );
-                }
-                else
-                {
-                    var texto = await TranscreverAudio(mediaBytes);
 
-                    Console.WriteLine("TRANSCRIÇÃO: " + texto);
-
-                    resposta = await ProcessChat(new ChatRequest { Mensagem = texto });
-
-                    await SalvarInteracao(
-                        clienteId,
-                        telefone,
-                        contentType,
-                        texto,
-                        publicUrl,
-                        resposta
+                    return Results.Content(
+                        "<Response><Message>Áudio inválido.</Message></Response>",
+                        "text/xml"
                     );
                 }
+
+                texto = await TranscreverAudio(mediaBytes);
+
+                Console.WriteLine("TRANSCRIÇÃO: " + texto);
+
+                resposta = await ProcessChat(new ChatRequest { Mensagem = texto });
+
+                await SalvarInteracao(
+                    clienteId,
+                    telefone,
+                    "audio",
+                    texto,
+                    publicUrl,
+                    resposta
+                );
             }
         }
         catch (Exception ex)
