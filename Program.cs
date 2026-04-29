@@ -948,7 +948,8 @@ app.MapPost("/whatsapp", async (HttpContext context) =>
         resposta = "Não consegui gerar resposta.";
     }
 
-    Console.WriteLine("RESPOSTA FINAL: " + resposta);
+    Console.WriteLine("CHEGOU NO FINAL DO WHATSAPP");
+    Console.WriteLine("RESPOSTA: " + resposta);
 
     return Results.Content(
         $"<Response><Message>{System.Net.WebUtility.HtmlEncode(resposta)}</Message></Response>",
