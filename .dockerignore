@@ -1,0 +1,6 @@
+bin/
+obj/
+.git/
+*.ps1
+*.log
+*.md
