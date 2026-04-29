@@ -1,4 +1,3 @@
-//11
 using Microsoft.Data.Sqlite;
 using System.Net;
 using OpenAI;
@@ -178,30 +177,6 @@ async Task<string> AnalisarImagemIA(string url)
 
     return ExtrairTexto(doc.RootElement);
 }
-
-// Inserir leitura
-app.MapPost("/leitura", async (HttpContext context) =>
-{
-    var leitura = await context.Request.ReadFromJsonAsync<Leitura>();
-    if (leitura == null) return Results.BadRequest("Leitura inválida.");
-
-    using var conn = new SqliteConnection("Data Source=aqua.db;Cache=Shared");
-    conn.Open();
-
-    var cmd = conn.CreateCommand();
-    cmd.CommandText = @"
-        INSERT INTO Leituras (Tanque, Temperatura, Ph, Oxigenio, Data)
-        VALUES ($tanque, $temp, $ph, $oxi, $data)
-    ";
-    cmd.Parameters.AddWithValue("$tanque", leitura.Tanque);
-    cmd.Parameters.AddWithValue("$temp", leitura.Temperatura);
-    cmd.Parameters.AddWithValue("$ph", leitura.Ph);
-    cmd.Parameters.AddWithValue("$oxi", leitura.Oxigenio);
-    cmd.Parameters.AddWithValue("$data", DateTime.Now.ToString("s"));
-
-    cmd.ExecuteNonQuery();
-    return Results.Ok("Leitura salva!");
-});
 
 string BuscarConhecimento(SqliteConnection conn, string pergunta, int clienteId)
 {
@@ -590,7 +565,7 @@ string ExtrairAudio(string caminhoVideo)
     {
         StartInfo = new ProcessStartInfo
         {
-            FileName = "ffmpeg",
+            FileName = Environment.OSVersion.Platform == PlatformID.Win32NT ? "C:\\ffmpeg\\bin\\ffmpeg.exe" : "ffmpeg",
             Arguments = $"-i \"{caminhoVideo}\" -q:a 0 -map a \"{caminhoAudio}\" -y",
             UseShellExecute = false,
             CreateNoWindow = true
@@ -655,6 +630,30 @@ async Task<string> AnalisarVideoComIA(List<string> frames)
 /////////////////
 /// ENDPOINTS ///
 /////////////////
+
+// Inserir leitura
+app.MapPost("/leitura", async (HttpContext context) =>
+{
+    var leitura = await context.Request.ReadFromJsonAsync<Leitura>();
+    if (leitura == null) return Results.BadRequest("Leitura inválida.");
+
+    using var conn = new SqliteConnection("Data Source=aqua.db;Cache=Shared");
+    conn.Open();
+
+    var cmd = conn.CreateCommand();
+    cmd.CommandText = @"
+        INSERT INTO Leituras (Tanque, Temperatura, Ph, Oxigenio, Data)
+        VALUES ($tanque, $temp, $ph, $oxi, $data)
+    ";
+    cmd.Parameters.AddWithValue("$tanque", leitura.Tanque);
+    cmd.Parameters.AddWithValue("$temp", leitura.Temperatura);
+    cmd.Parameters.AddWithValue("$ph", leitura.Ph);
+    cmd.Parameters.AddWithValue("$oxi", leitura.Oxigenio);
+    cmd.Parameters.AddWithValue("$data", DateTime.Now.ToString("s"));
+
+    cmd.ExecuteNonQuery();
+    return Results.Ok("Leitura salva!");
+});
 
 // CHAT
 app.MapPost("/chat", async (HttpContext context) =>
@@ -818,17 +817,17 @@ app.MapPost("/whatsapp", async (HttpContext context) =>
                 try
                 {
                     // ============================
-                    // 🎞️ EXTRAIR FRAMES (AQUI!)
+                    // EXTRAIR FRAMES
                     // ============================
 
                     var pastaFrames = Path.Combine(uploadsPath, $"frames_{Guid.NewGuid()}");
 
                     var frames = VideoHelper.ExtrairFrames(
-                        filePath,        // caminho do vídeo que você salvou
-                        pastaFrames,     // pasta onde vão os frames
+                        filePath,
+                        pastaFrames,
                         3                // 1 frame a cada 3 segundos
                     )
-                    .Take(5)            // 🔥 limita (importantíssimo)
+                    .Take(5)            // limita
                     .ToList();
 
                     Console.WriteLine($"FRAMES GERADOS: {frames.Count}");
@@ -1009,7 +1008,6 @@ app.MapPost("/upload", async (HttpContext context) =>
         clienteId
     );
 
-    // ?? AQUI É O PONTO IMPORTANTE
     // cria a pasta automaticamente no servidor
     if (!Directory.Exists(uploadsPath))
         Directory.CreateDirectory(uploadsPath);
@@ -1080,7 +1078,9 @@ app.UseStaticFiles();
 
 app.Run();
 
-// Models
+//////////
+// DTOs //
+//////////
 record Leitura
 {
     public string Tanque { get; set; } = "";
@@ -1102,7 +1102,11 @@ record ConhecimentoRequest
     public string? CriadoPor { get; set; }
 }
 
-class AppState
+////////////////////
+// Infraestrutura //
+////////////////////
+
+public class AppState
 {
     public static SemaphoreSlim Lock = new SemaphoreSlim(1, 1);
 }
@@ -1125,7 +1129,7 @@ public static class VideoHelper
         {
             StartInfo = new ProcessStartInfo
             {
-                FileName = "ffmpeg",
+                FileName = Environment.OSVersion.Platform == PlatformID.Win32NT ? "C:\\ffmpeg\\bin\\ffmpeg.exe" : "ffmpeg",
                 Arguments = argumentos,
                 RedirectStandardError = true,
                 UseShellExecute = false,
