@@ -5,6 +5,7 @@ COPY . .
 
 RUN apt-get update && apt-get install -y ffmpeg
 
+RUN dotnet restore
 RUN dotnet publish -c Release -o out
 
 FROM mcr.microsoft.com/dotnet/aspnet:8.0
