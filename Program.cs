@@ -15,7 +15,8 @@ A Ecomarine Biotech é referência em biotecnologia aplicada à aquicultura, ofe
 Site oficial: https://www.ecomarinebiotech.com
 
 REGRAS:
-- Responda apenas sobre aquicultura OU sobre a empresa Ecomarine Biotech quando solicitado
+- Responda apenas sobre aquicultura 
+- Sobre a empresa Ecomarine Biotech quando solicitado 
 - Quando a pergunta for sobre a empresa, destaque seus diferenciais, inovação e impacto na produtividade
 - Seja direto, técnico e prático.
 - Não solicite dados ao usuário automaticamente.
@@ -48,7 +49,7 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
         ForwardedHeaders.XForwardedFor |
         ForwardedHeaders.XForwardedProto;
 
-    options.KnownNetworks.Clear();
+    options.KnownIPNetworks.Clear();
     options.KnownProxies.Clear();
 });
 
@@ -544,90 +545,6 @@ string ObterExtensao(string contentType)
     };
 }
 
-async Task<string> DownloadMidia(string url, string extensao)
-{
-    var http = new HttpClient();
-
-    var bytes = await http.GetByteArrayAsync(url);
-
-    var nomeArquivo = $"video_{Guid.NewGuid()}.{extensao}";
-    var caminho = Path.Combine("wwwroot/uploads", nomeArquivo);
-
-    await File.WriteAllBytesAsync(caminho, bytes);
-
-    return caminho;
-}
-
-string ExtrairAudio(string caminhoVideo)
-{
-    var caminhoAudio = caminhoVideo.Replace(".mp4", ".mp3");
-
-    var processo = new Process
-    {
-        StartInfo = new ProcessStartInfo
-        {
-            FileName = Environment.OSVersion.Platform == PlatformID.Win32NT ? "C:\\ffmpeg\\bin\\ffmpeg.exe" : "ffmpeg",
-            Arguments = $"-i \"{caminhoVideo}\" -q:a 0 -map a \"{caminhoAudio}\" -y",
-            UseShellExecute = false,
-            CreateNoWindow = true
-        }
-    };
-
-    processo.Start();
-    processo.WaitForExit();
-
-    return File.Exists(caminhoAudio) ? caminhoAudio : null;
-}
-
-async Task<string> AnalisarVideoComIA(List<string> frames)
-{
-    var contents = new List<object>();
-
-    contents.Add(new
-    {
-        type = "input_text",
-        text = "Analise este vídeo de aquicultura. Verifique qualidade da água, comportamento dos peixes e possíveis problemas."
-    });
-
-    foreach (var frame in frames)
-    {
-        var bytes = await File.ReadAllBytesAsync(frame);
-        var base64 = Convert.ToBase64String(bytes);
-
-        contents.Add(new
-        {
-            type = "input_image",
-            image_base64 = base64
-        });
-    }
-
-    var request = new
-    {
-        model = "gpt-4.1-mini",
-        input = new[]
-        {
-            new
-            {
-                role = "user",
-                content = contents
-            }
-        }
-    };
-
-    var http = new HttpClient();
-    http.DefaultRequestHeaders.Add("Authorization", $"Bearer SUA_API_KEY");
-
-    var response = await http.PostAsJsonAsync("https://api.openai.com/v1/responses", request);
-    var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-
-    return json
-        .GetProperty("output")[0]
-        .GetProperty("content")[0]
-        .GetProperty("text")
-        .GetString();
-}
-
-
 /////////////////
 /// ENDPOINTS ///
 /////////////////
@@ -813,84 +730,17 @@ app.MapPost("/whatsapp", async (HttpContext context) =>
             // ============================
             else if (contentType.StartsWith("video"))
             {
-                Console.WriteLine("PROCESSANDO VÍDEO");
+                Console.WriteLine("VIDEO DESABILITADO");
+                resposta = "Envio de vídeo não está habilitado no momento.";
 
-                try
-                {
-                    // ============================
-                    // EXTRAIR FRAMES
-                    // ============================
-
-                    var pastaFrames = Path.Combine(uploadsPath, $"frames_{Guid.NewGuid()}");
-
-                    var frames = VideoHelper.ExtrairFrames(
-                        filePath,
-                        pastaFrames,
-                        3                // 1 frame a cada 3 segundos
-                    )
-                    .Take(5)            // limita
-                    .ToList();
-
-                    Console.WriteLine($"FRAMES GERADOS: {frames.Count}");
-
-                    if (frames.Count == 0)
-                    {
-                        resposta = "Não consegui extrair imagens do vídeo.";
-
-                        await SalvarInteracao(
-                            clienteId,
-                            telefone,
-                            "video",
-                            "falha ao extrair frames",
-                            publicUrl,
-                            resposta
-                        );
-
-                        return Results.Content(
-                            "<Response><Message>Erro ao processar vídeo.</Message></Response>",
-                            "text/xml"
-                        );
-                    }
-
-                    // ============================
-                    // IA
-                    // ============================
-                    resposta = await AnalisarVideoComIA(frames);
-
-                    await SalvarInteracao(
-                        clienteId,
-                        telefone,
-                        "video",
-                        "video recebido",
-                        publicUrl,
-                        resposta
-                    );
-
-                    // ============================
-                    // LIMPEZA
-                    // ============================
-                    try
-                    {
-                        Directory.Delete(pastaFrames, true);
-                        File.Delete(filePath);
-                    }
-                    catch { }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine("ERRO PROCESSAR VIDEO: " + ex.ToString());
-
-                    resposta = "Erro ao analisar o vídeo.";
-
-                    await SalvarInteracao(
-                        clienteId,
-                        telefone,
-                        "video",
-                        "erro",
-                        publicUrl,
-                        resposta
-                    );
-                }
+                await SalvarInteracao(
+                    clienteId,
+                    telefone,
+                    "video",
+                    "bloqueado",
+                    publicUrl,
+                    resposta
+                );
             }
         }
         catch (Exception ex)
@@ -1111,39 +961,4 @@ record ConhecimentoRequest
 public class AppState
 {
     public static SemaphoreSlim Lock = new SemaphoreSlim(1, 1);
-}
-
-public static class VideoHelper
-{
-    public static List<string> ExtrairFrames(
-        string caminhoVideo,
-        string pastaSaida,
-        int intervaloSegundos = 3)
-    {
-        if (!Directory.Exists(pastaSaida))
-            Directory.CreateDirectory(pastaSaida);
-
-        string outputPattern = Path.Combine(pastaSaida, "frame_%03d.jpg");
-
-        string argumentos = $"-i \"{caminhoVideo}\" -vf fps=1/{intervaloSegundos} \"{outputPattern}\" -hide_banner -loglevel error";
-
-        var process = new Process
-        {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = Environment.OSVersion.Platform == PlatformID.Win32NT ? "C:\\ffmpeg\\bin\\ffmpeg.exe" : "ffmpeg",
-                Arguments = argumentos,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            }
-        };
-
-        process.Start();
-        process.WaitForExit();
-
-        return Directory.GetFiles(pastaSaida, "frame_*.jpg")
-                        .OrderBy(f => f)
-                        .ToList();
-    }
 }
