@@ -54,12 +54,13 @@ builder.WebHost.UseWebRoot("wwwroot");
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders =
-        ForwardedHeaders.XForwardedFor |
-        ForwardedHeaders.XForwardedProto;
+        Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor |
+        Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto;
 
-    options.KnownIPNetworks.Clear();
+    options.KnownNetworks.Clear();
     options.KnownProxies.Clear();
 });
+
 
 var app = builder.Build();
 
@@ -163,7 +164,9 @@ async Task<string> AnalisarImagemIA(string url)
                         - Se a imagem estiver ruim, informe limitação.
                         - Só depois faça análise técnica se houver evidência.
                         "
-                    },                    new
+                    },
+
+                    new
                     {
                         type = "input_image",
                         image_url = url
@@ -229,8 +232,7 @@ string BuscarConhecimento(SqliteConnection conn, string pergunta, int clienteId)
 
 string ExtrairTexto(JsonElement root)
 {
-    if (root.TryGetProperty("output_text", out var text))
-        return text.GetString() ?? "";
+    var textos = new List<string>();
 
     if (root.TryGetProperty("output", out var output))
     {
@@ -241,13 +243,20 @@ string ExtrairTexto(JsonElement root)
                 foreach (var c in content.EnumerateArray())
                 {
                     if (c.TryGetProperty("text", out var t))
-                        return t.GetString() ?? "";
+                    {
+                        var texto = t.GetString();
+
+                        if (!string.IsNullOrWhiteSpace(texto))
+                        {
+                            textos.Add(texto);
+                        }
+                    }
                 }
             }
         }
     }
 
-    return "";
+    return string.Join("\n", textos.Where(t => !string.IsNullOrWhiteSpace(t)));
 }
 
 // Função de validação da pergunta por palavra-chave
@@ -343,9 +352,22 @@ async Task<string> ProcessChat(ChatRequest req)
         {
             bool temConhecimento = !string.IsNullOrWhiteSpace(conhecimento);
 
+            string LimitarTexto(string texto, int maxChars)
+            {
+                if (string.IsNullOrWhiteSpace(texto))
+                    return "";
+
+                return texto.Length > maxChars
+                    ? texto.Substring(0, maxChars)
+                    : texto;
+            }
+
             string contextoFormatado = temConhecimento
-                ? string.Join("\n", conhecimento.Split('\n').Select(c => "- " + c))
+                ? LimitarTexto(
+                    string.Join("\n", conhecimento.Split('\n').Select(c => "- " + c)), 2000
+                  )
                 : "Nenhum contexto adicional encontrado.";
+
 
             var prompt = $@"
             {PROMPT_BASE}
@@ -356,6 +378,16 @@ async Task<string> ProcessChat(ChatRequest req)
             PERGUNTA:
             {msg}
             ";
+
+            // ===== LOG DO PROMPT =====
+            Console.WriteLine("========== PROMPT ENVIADO ==========");
+            Console.WriteLine(prompt);
+
+            Console.WriteLine("========== TAMANHO PROMPT ==========");
+            Console.WriteLine(prompt.Length);
+
+            Console.WriteLine("========== CONTEXTO USADO ==========");
+            Console.WriteLine(contextoFormatado.Length);
 
             using var http = new HttpClient
             {
@@ -393,6 +425,10 @@ async Task<string> ProcessChat(ChatRequest req)
             var root = doc.RootElement;
 
             resposta = ExtrairTexto(root);
+
+            // ===== LOG RESPOSTA =====
+            Console.WriteLine("========== RESPOSTA IA ==========");
+            Console.WriteLine(resposta);
 
             if (string.IsNullOrWhiteSpace(resposta))
             {
@@ -553,6 +589,51 @@ string ObterExtensao(string contentType)
     };
 }
 
+string ConsolidarAnaliseVideo(List<string> analises)
+{
+    return $@"
+        Análise baseada em múltiplos frames do vídeo:
+
+    {string.Join("\n\n---\n\n", analises)}
+
+    Conclusão:
+    A análise foi feita com base em amostras visuais do vídeo. Pode haver limitações dependendo da qualidade e cobertura dos frames.
+    ";
+}
+
+async Task EnviarMensagemWhatsApp(string telefoneDestino, string mensagem)
+{
+    var accountSid = Environment.GetEnvironmentVariable("TWILIO_ACCOUNT_SID");
+    var authToken = Environment.GetEnvironmentVariable("TWILIO_AUTH_TOKEN");
+    var from = Environment.GetEnvironmentVariable("TWILIO_WHATSAPP_NUMBER"); // ex: whatsapp:+14155238886
+
+    using var http = new HttpClient();
+
+    var authBytes = System.Text.Encoding.ASCII.GetBytes($"{accountSid}:{authToken}");
+    http.DefaultRequestHeaders.Authorization =
+        new System.Net.Http.Headers.AuthenticationHeaderValue(
+            "Basic",
+            Convert.ToBase64String(authBytes)
+        );
+
+    var content = new FormUrlEncodedContent(new Dictionary<string, string>
+    {
+        { "To", telefoneDestino },        // ex: whatsapp:+5511999999999
+        { "From", from },                 // ex: whatsapp:+14155238886
+        { "Body", mensagem }
+    });
+
+    var response = await http.PostAsync(
+        $"https://api.twilio.com/2010-04-01/Accounts/{accountSid}/Messages.json",
+        content
+    );
+
+    var resp = await response.Content.ReadAsStringAsync();
+
+    Console.WriteLine("TWILIO SEND STATUS: " + response.StatusCode);
+    Console.WriteLine(resp);
+}
+
 /////////////////
 /// ENDPOINTS ///
 /////////////////
@@ -599,7 +680,12 @@ app.MapPost("/chat", async (HttpContext context) =>
     }
 
     //Só chega aqui se for válido
-    return Results.Ok(await ProcessChat(req));
+    var resposta = await ProcessChat(req);
+
+    return Results.Ok(new
+    {
+        resposta
+    });
 });
 
 
@@ -612,6 +698,27 @@ app.MapPost("/whatsapp", async (HttpContext context) =>
     var numMedia = form["NumMedia"].ToString();
     var telefone = form["From"].ToString();
     var clienteId = telefone; // MVP
+
+    if (string.IsNullOrWhiteSpace(body) && (string.IsNullOrEmpty(numMedia) || numMedia == "0"))
+    {
+        Console.WriteLine("MENSAGEM VAZIA RECEBIDA");
+
+        var respostaVazia = "Não entendi sua mensagem. Pode descrever melhor o que precisa?";
+
+        await SalvarInteracao(
+            clienteId,
+            telefone,
+            "vazio",
+            "",
+            null,
+            respostaVazia
+        );
+
+        return Results.Content(
+            $"<Response><Message>{respostaVazia}</Message></Response>",
+            "text/xml"
+        );
+    }
 
     string resposta = "";
 
@@ -649,9 +756,49 @@ app.MapPost("/whatsapp", async (HttpContext context) =>
 
             Console.WriteLine("STATUS DOWNLOAD: " + response.StatusCode);
 
-            response.EnsureSuccessStatusCode();
+            // ✅ valida antes de tudo
+            if (!response.IsSuccessStatusCode)
+            {
+                return Results.Content(
+                    "<Response><Message>Erro ao baixar a mídia.</Message></Response>",
+                    "text/xml"
+                );
+            }
 
+            // ✅ BLOQUEIO ANTES DE BAIXAR TUDO
+            if (response.Content.Headers.ContentLength.HasValue &&
+                response.Content.Headers.ContentLength > 10_000_000)
+            {
+                return Results.Content(
+                    "<Response><Message>Arquivo muito grande.</Message></Response>",
+                    "text/xml"
+                );
+            }
+
+            // ✅ AGORA SIM baixa
             var mediaBytes = await response.Content.ReadAsByteArrayAsync();
+
+            // ✅ DUPLA PROTEÇÃO
+            if (mediaBytes.Length > 10_000_000)
+            {
+                Console.WriteLine("ARQUIVO MUITO GRANDE");
+
+                var respostaGrande = "O arquivo enviado é muito grande. Por favor, envie um arquivo menor.";
+
+                await SalvarInteracao(
+                    clienteId,
+                    telefone,
+                    "midia_grande",
+                    "",
+                    mediaUrl,
+                    respostaGrande
+                );
+
+                return Results.Content(
+                    $"<Response><Message>{respostaGrande}</Message></Response>",
+                    "text/xml"
+                );
+            }
 
             var uploadsPath = Path.Combine(app.Environment.WebRootPath, "uploads");
             Directory.CreateDirectory(uploadsPath);
@@ -697,8 +844,6 @@ app.MapPost("/whatsapp", async (HttpContext context) =>
             {
                 Console.WriteLine("PROCESSANDO ÁUDIO");
 
-                string texto;
-
                 if (mediaBytes.Length == 0)
                 {
                     resposta = "Áudio vazio ou inválido.";
@@ -718,19 +863,42 @@ app.MapPost("/whatsapp", async (HttpContext context) =>
                     );
                 }
 
-                texto = await TranscreverAudio(mediaBytes);
+                var texto = await TranscreverAudio(mediaBytes);
 
                 Console.WriteLine("TRANSCRIÇÃO: " + texto);
 
-                resposta = await ProcessChat(new ChatRequest { Mensagem = texto });
+                // BACKGROUND
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        var respostaIA = await ProcessChat(new ChatRequest { Mensagem = texto });
 
-                await SalvarInteracao(
-                    clienteId,
-                    telefone,
-                    "audio",
-                    texto,
-                    publicUrl,
-                    resposta
+                        await EnviarMensagemWhatsApp(
+                            telefone,
+                            respostaIA
+                        );
+
+                        await SalvarInteracao(
+                            clienteId,
+                            telefone,
+                            "audio",
+                            texto,
+                            publicUrl,
+                            respostaIA
+                        );
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine("ERRO AUDIO ASYNC:");
+                        Console.WriteLine(ex.ToString());
+                    }
+                });
+
+                // RESPOSTA IMEDIATA PRO WHATSAPP
+                return Results.Content(
+                    "<Response><Message>🎧 Áudio recebido. Processando...</Message></Response>",
+                    "text/xml"
                 );
             }
             // ============================
@@ -738,16 +906,81 @@ app.MapPost("/whatsapp", async (HttpContext context) =>
             // ============================
             else if (contentType.StartsWith("video"))
             {
-                Console.WriteLine("VIDEO DESABILITADO");
-                resposta = "Envio de vídeo não está habilitado no momento.";
+                Console.WriteLine("VIDEO RECEBIDO - PROCESSAMENTO ASSÍNCRONO");
 
-                await SalvarInteracao(
-                    clienteId,
-                    telefone,
-                    "video",
-                    "bloqueado",
-                    publicUrl,
-                    resposta
+                // responde imediatamente pro WhatsApp
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        var framesDir = Path.Combine(uploadsPath, $"frames_{Guid.NewGuid()}");
+
+                        var frames = VideoHelper.ExtrairFrames(filePath, framesDir);
+
+                        string respostaVideo;
+
+                        if (frames.Count == 0)
+                        {
+                            respostaVideo = "Não consegui extrair imagens do vídeo.";
+                        }
+                        else
+                        {
+                            var analises = new List<string>();
+
+                            foreach (var framePath in frames)
+                            {
+                                var relativePath = framePath
+                                    .Replace(app.Environment.WebRootPath, "")
+                                    .Replace("\\", "/");
+
+                                if (!relativePath.StartsWith("/"))
+                                    relativePath = "/" + relativePath;
+
+                                var frameUrl = $"{baseUrl}{relativePath}";
+
+                                var analise = await AnalisarImagemIA(frameUrl);
+
+                                analises.Add(analise);
+                            }
+
+                            respostaVideo = ConsolidarAnaliseVideo(analises);
+                        }
+
+                        // enviar mensagem ativa pro usuário
+                        Console.WriteLine("RESULTADO VIDEO:");
+
+                        await EnviarMensagemWhatsApp(
+                            telefone,
+                            $"📹 Análise do seu vídeo:\n\n{respostaVideo}"
+                        );
+
+                        await SalvarInteracao(
+                            clienteId,
+                            telefone,
+                            "video",
+                            "processado async",
+                            publicUrl,
+                            respostaVideo
+                        );
+
+                        try
+                        {
+                            Directory.Delete(framesDir, true);
+                        }
+                        catch { }
+
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine("ERRO VIDEO ASYNC:");
+                        Console.WriteLine(ex.ToString());
+                    }
+
+                });
+
+                return Results.Content(
+                    "<Response><Message>Recebi o vídeo. Processando análise...</Message></Response>",
+                    "text/xml"
                 );
             }
         }
@@ -773,6 +1006,25 @@ app.MapPost("/whatsapp", async (HttpContext context) =>
 
         try
         {
+            if (!PerguntaValida(body))
+            {
+                resposta = "Posso ajudar apenas com aquicultura.";
+
+                await SalvarInteracao(
+                    clienteId,
+                    telefone,
+                    "texto",
+                    body,
+                    null,
+                    resposta
+                );
+
+                return Results.Content(
+                    $"<Response><Message>{resposta}</Message></Response>",
+                    "text/xml"
+                );
+            }
+
             resposta = await ProcessChat(new ChatRequest { Mensagem = body });
 
             await SalvarInteracao(
@@ -783,12 +1035,13 @@ app.MapPost("/whatsapp", async (HttpContext context) =>
                 null,
                 resposta
             );
+
         }
         catch (Exception ex)
         {
             Console.WriteLine("ERRO TEXTO: " + ex.ToString());
 
-            resposta = "Erro ao processar sua mensagem.";
+            resposta = await ProcessChat(new ChatRequest { Mensagem = body });
 
             await SalvarInteracao(
                 clienteId,
@@ -962,11 +1215,44 @@ record ConhecimentoRequest
     public string? CriadoPor { get; set; }
 }
 
-////////////////////
-// Infraestrutura //
-////////////////////
+/////////////
+// CLASSES //
+/////////////
 
 public class AppState
 {
     public static SemaphoreSlim Lock = new SemaphoreSlim(1, 1);
+}
+
+static class VideoHelper
+{
+    public static List<string> ExtrairFrames(string videoPath, string outputDir)
+    {
+        Directory.CreateDirectory(outputDir);
+
+        var outputPattern = Path.Combine(outputDir, "frame_%03d.jpg");
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = "ffmpeg",
+            Arguments = $"-i \"{videoPath}\" -vf fps=1/2 -q:v 2 \"{outputPattern}\"",
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        using var process = Process.Start(psi);
+
+        if (!process.WaitForExit(15000)) // 15s timeout
+        {
+            process.Kill();
+        }
+
+        var frames = Directory.GetFiles(outputDir, "*.jpg")
+                              .OrderBy(f => f)
+                              .Take(5) // limite inteligente
+                              .ToList();
+
+        return frames;
+    }
 }
