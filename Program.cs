@@ -259,7 +259,7 @@ string ExtrairTexto(JsonElement root)
     return string.Join("\n", textos.Where(t => !string.IsNullOrWhiteSpace(t)));
 }
 
-// Função de validação da pergunta por palavra-chave
+// validação da pergunta por palavra-chave
 bool PerguntaValida(string pergunta)
 {
     if (string.IsNullOrWhiteSpace(pergunta))
@@ -277,7 +277,7 @@ bool PerguntaValida(string pergunta)
     return palavrasChave.Any(p => texto.Contains(p));
 }
 
-// Função IA + fallback
+// IA + fallback
 async Task<string> ProcessChat(ChatRequest req)
 {
     try
@@ -601,6 +601,18 @@ string ConsolidarAnaliseVideo(List<string> analises)
     ";
 }
 
+List<string> DividirMensagem(string texto, int limite = 1500)
+{
+    var partes = new List<string>();
+
+    for (int i = 0; i < texto.Length; i += limite)
+    {
+        partes.Add(texto.Substring(i, Math.Min(limite, texto.Length - i)));
+    }
+
+    return partes;
+}
+
 async Task EnviarMensagemWhatsApp(string telefoneDestino, string mensagem)
 {
     var accountSid = Environment.GetEnvironmentVariable("TWILIO_ACCOUNT_SID");
@@ -626,22 +638,32 @@ async Task EnviarMensagemWhatsApp(string telefoneDestino, string mensagem)
         telefoneDestino = "whatsapp:" + telefoneDestino;
     }
 
-    var content = new FormUrlEncodedContent(new Dictionary<string, string>
+    var partes = DividirMensagem(mensagem);
+
+    for (int i = 0; i < partes.Count; i++)
     {
-        { "To", telefoneDestino },        // ex: whatsapp:+5511999999999
-        { "From", from },                 // ex: whatsapp:+14155238886
-        { "Body", mensagem }
+        var msg = partes.Count > 1
+            ? $"({i + 1}/{partes.Count}) {partes[i]}"
+            : partes[i];
+
+        var content = new FormUrlEncodedContent(new Dictionary<string, string>
+    {
+        { "To", telefoneDestino },
+        { "From", from },
+        { "Body", msg }
     });
 
-    var response = await http.PostAsync(
-        $"https://api.twilio.com/2010-04-01/Accounts/{accountSid}/Messages.json",
-        content
-    );
+        var responseTwilio = await http.PostAsync(
+            $"https://api.twilio.com/2010-04-01/Accounts/{accountSid}/Messages.json",
+            content
+        );
 
-    var resp = await response.Content.ReadAsStringAsync();
+        var respTwilio = await responseTwilio.Content.ReadAsStringAsync();
 
-    Console.WriteLine("TWILIO SEND STATUS: " + response.StatusCode);
-    Console.WriteLine(resp);
+        Console.WriteLine("TWILIO SEND STATUS: " + responseTwilio.StatusCode);
+        Console.WriteLine(respTwilio);
+    }
+
 }
 
 /////////////////
