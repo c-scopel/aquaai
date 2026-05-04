@@ -1245,6 +1245,48 @@ static class VideoHelper
         var psi = new ProcessStartInfo
         {
             FileName = "ffmpeg",
+            Arguments = $"-i \"{videoPath}\" -vf fps=1 -q:v 2 \"{outputPattern}\"",
+            RedirectStandardError = true,
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        using var process = Process.Start(psi);
+
+        string stderr = process.StandardError.ReadToEnd();
+        string stdout = process.StandardOutput.ReadToEnd();
+
+        process.WaitForExit();
+
+        Console.WriteLine("FFMPEG STDOUT:");
+        Console.WriteLine(stdout);
+
+        Console.WriteLine("FFMPEG STDERR:");
+        Console.WriteLine(stderr);
+
+        var frames = Directory.GetFiles(outputDir, "*.jpg")
+                              .OrderBy(f => f)
+                              .Take(5)
+                              .ToList();
+
+        Console.WriteLine("FRAMES GERADOS: " + frames.Count);
+
+        return frames;
+    }
+}
+
+static class VideoHelperBKP
+{
+    public static List<string> ExtrairFrames(string videoPath, string outputDir)
+    {
+        Directory.CreateDirectory(outputDir);
+
+        var outputPattern = Path.Combine(outputDir, "frame_%03d.jpg");
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = "ffmpeg",
             Arguments = $"-i \"{videoPath}\" -vf fps=1/2 -q:v 2 \"{outputPattern}\"",
             RedirectStandardError = true,
             UseShellExecute = false,
