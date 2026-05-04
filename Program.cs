@@ -605,7 +605,12 @@ async Task EnviarMensagemWhatsApp(string telefoneDestino, string mensagem)
 {
     var accountSid = Environment.GetEnvironmentVariable("TWILIO_ACCOUNT_SID");
     var authToken = Environment.GetEnvironmentVariable("TWILIO_AUTH_TOKEN");
-    var from = Environment.GetEnvironmentVariable("TWILIO_WHATSAPP_NUMBER"); // ex: whatsapp:+14155238886
+    var from = Environment.GetEnvironmentVariable("TWILIO_WHATSAPP_NUMBER");
+
+    if (!string.IsNullOrWhiteSpace(from) && !from.StartsWith("whatsapp:"))
+    {
+        from = "whatsapp:" + from;
+    }
 
     using var http = new HttpClient();
 
@@ -615,6 +620,11 @@ async Task EnviarMensagemWhatsApp(string telefoneDestino, string mensagem)
             "Basic",
             Convert.ToBase64String(authBytes)
         );
+
+    if (!string.IsNullOrWhiteSpace(telefoneDestino) && !telefoneDestino.StartsWith("whatsapp:"))
+    {
+        telefoneDestino = "whatsapp:" + telefoneDestino;
+    }
 
     var content = new FormUrlEncodedContent(new Dictionary<string, string>
     {
