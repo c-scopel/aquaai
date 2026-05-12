@@ -788,7 +788,7 @@ app.MapPost("/whatsapp", async (HttpContext context) =>
 
             Console.WriteLine("STATUS DOWNLOAD: " + response.StatusCode);
 
-            // ✅ valida antes de tudo
+            // valida antes de tudo
             if (!response.IsSuccessStatusCode)
             {
                 return Results.Content(
@@ -797,7 +797,7 @@ app.MapPost("/whatsapp", async (HttpContext context) =>
                 );
             }
 
-            // ✅ BLOQUEIO ANTES DE BAIXAR TUDO
+            // BLOQUEIO ANTES DE BAIXAR TUDO
             if (response.Content.Headers.ContentLength.HasValue &&
                 response.Content.Headers.ContentLength > 10_000_000)
             {
@@ -807,10 +807,10 @@ app.MapPost("/whatsapp", async (HttpContext context) =>
                 );
             }
 
-            // ✅ AGORA SIM baixa
+            // AGORA SIM baixa
             var mediaBytes = await response.Content.ReadAsByteArrayAsync();
 
-            // ✅ DUPLA PROTEÇÃO
+            // DUPLA PROTEÇÃO
             if (mediaBytes.Length > 10_000_000)
             {
                 Console.WriteLine("ARQUIVO MUITO GRANDE");
